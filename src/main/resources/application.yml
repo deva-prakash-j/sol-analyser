@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: sol
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 200000
+  datasource:
+    url: ${DB_URI}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 300000
+      max-lifetime: 1200000
+      connection-timeout: 15000
+      leak-detection-threshold: 60000
+      validation-timeout: 5000
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          batch_size: 20
+          order_inserts: true
+          order_updates: true
+        cache:
+          use_second_level_cache: false
+          use_query_cache: false
+
+app:
+  cache:
+    default-ttl-seconds: 86400
+
+proxy-pool:
+  host: "p.webshare.io"
+  port: 80
+  usernamePrefix: ${PROXY_USERNAME}
+  startIndex: 1
+  count: 100
+  password: ${PROXY_PASSWORD}
+  perProxyMaxConnections: 1
+  connectTimeoutMs: 10000
+  responseTimeoutMs: 30000
+  readTimeoutSec: 30
+  writeTimeoutSec: 30
+  enableMetrics: true
