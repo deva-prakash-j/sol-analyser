@@ -3,6 +3,8 @@ package com.sol.util;
 import com.sol.dto.Transaction;
 import com.sol.service.PnlEngine;
 import com.sol.service.PriceService;
+import com.sol.service.WalletScoringEngine;
+import com.sol.service.WalletScorePersistenceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,13 +23,14 @@ import static com.sol.util.Constant.QUOTE_MINTS;
 public class NormalizeTransaction {
 
     private final PriceService priceService;
+    private final WalletScoringEngine scoringEngine;
+    private final WalletScorePersistenceService persistenceService;
 
     private final String solanaMint = "So11111111111111111111111111111111111111112";
 
     private final BigDecimal LAMPORTS_PER_SOL = new BigDecimal("1000000000");
 
     private static final MathContext MC = new MathContext(18, RoundingMode.HALF_UP);
-    private static BigDecimal bd(Double d) { return d == null ? BigDecimal.ZERO : BigDecimal.valueOf(d); }
 
     /** output row matching the final SELECT */
     public record Row(
@@ -51,34 +54,145 @@ public class NormalizeTransaction {
 
     /** prints rows; keep signature unchanged */
     public void process(List<Transaction> transactions, String wallet) {
-        List<Row> rows = processToList(dedupeLatestBySlot(transactions), wallet);
-        rows = rows.stream().filter(r -> List.of(Side.BUY, Side.SELL).contains(r.side))
-                .sorted(Comparator.comparing(Row::blockTime)).collect(Collectors.toList());
-        PnlEngine.Result result = PnlEngine.run(rows);
-        var metrics = WalletMetricsCalculator.fromResult(result);
-
-        log.info("Completed");
+        if (transactions == null || transactions.isEmpty()) {
+            log.warn("No transactions provided for normalization for wallet: {}", wallet);
+            return;
+        }
+        
+        if (wallet == null || wallet.isBlank()) {
+            log.error("Invalid wallet address for normalization");
+            return;
+        }
+        
+        try {
+            log.info("Starting transaction normalization for wallet: {} ({} transactions)", 
+                    wallet, transactions.size());
+            
+            List<Row> rows;
+            try {
+                rows = processToList(dedupeLatestBySlot(transactions), wallet);
+            } catch (Exception e) {
+                log.error("Failed to process transactions to rows for wallet {}: {}", 
+                        wallet, e.getMessage(), e);
+                return;
+            }
+            
+            if (rows == null || rows.isEmpty()) {
+                log.warn("No valid rows after normalization for wallet: {}", wallet);
+                return;
+            }
+            
+            rows = rows.stream()
+                    .filter(r -> r != null && List.of(Side.BUY, Side.SELL).contains(r.side))
+                    .sorted(Comparator.comparing(Row::blockTime))
+                    .collect(Collectors.toList());
+            
+            if (rows.isEmpty()) {
+                log.warn("No BUY/SELL rows after filtering for wallet: {}", wallet);
+                return;
+            }
+            
+            log.info("Normalized to {} tradeable rows for wallet: {}", rows.size(), wallet);
+            
+            // Calculate PnL - wrap in try-catch to prevent crashes
+            PnlEngine.Result result;
+            try {
+                result = PnlEngine.run(rows);
+                if (result == null) {
+                    log.error("PnL engine returned null result for wallet: {}", wallet);
+                    return;
+                }
+            } catch (Exception e) {
+                log.error("PnL calculation failed for wallet {}: {}", wallet, e.getMessage(), e);
+                return;
+            }
+            
+            // Calculate metrics - wrap in try-catch to prevent crashes
+            WalletMetricsCalculator.WalletMetrics metrics;
+            try {
+                metrics = WalletMetricsCalculator.fromResult(result);
+                if (metrics == null) {
+                    log.error("WalletMetricsCalculator returned null metrics for wallet: {}", wallet);
+                    return;
+                }
+            } catch (Exception e) {
+                log.error("Metrics calculation failed for wallet {}: {}", wallet, e.getMessage(), e);
+                return;
+            }
+            
+            // Score wallet for copy trading - wrap in try-catch to prevent crashes
+            try {
+                WalletScoringEngine.ScoringResult score = scoringEngine.scoreWallet(wallet, metrics);
+                
+                // Simplified logging - only key info
+                log.info("✓ Wallet {} | Tier: {} | Score: {}/100 | PnL: ${} | Win Rate: {}% | Copy: {}", 
+                    wallet.substring(0, 8), 
+                    score.tier().label,
+                    score.compositeScore(),
+                    metrics.totalRealizedUsd().setScale(2, RoundingMode.HALF_UP),
+                    String.format("%.1f", metrics.tradeWinRate()),
+                    score.isCopyTradingCandidate() ? "YES" : "NO"
+                );
+                
+                if (!score.passedHardFilters()) {
+                    log.warn("⚠ Wallet {} failed filters: {}", wallet.substring(0, 8), score.failedFilters().get(0));
+                }
+                
+                if (!score.redFlags().isEmpty() && score.compositeScore() >= 60) {
+                    log.warn("⚠ Wallet {} has {} red flag(s)", wallet.substring(0, 8), score.redFlags().size());
+                }
+                
+                // Persist to database
+                try {
+                    persistenceService.saveScore(score);
+                    log.debug("Persisted score to database for wallet {}", wallet.substring(0, 8));
+                } catch (Exception e) {
+                    log.error("Failed to persist score for {}: {}", wallet.substring(0, 8), e.getMessage());
+                    // Don't stop - persistence failure is not critical
+                }
+                
+            } catch (Exception e) {
+                log.error("Wallet scoring failed for {}: {}", wallet, e.getMessage(), e);
+                // Don't stop processing - scoring failure is not critical
+            }
+            
+        } catch (Exception e) {
+            log.error("FATAL: Unexpected error during transaction processing for wallet {}: {}", 
+                    wallet, e.getMessage(), e);
+            // Swallow exception - don't let it propagate
+        }
     }
 
     public List<Transaction> dedupeLatestBySlot(List<Transaction> txs) {
-        Map<String, Transaction> bySig = new HashMap<>();
-        for (var t : txs) {
-            var sigOpt = primarySignature(t);
-            if (sigOpt.isEmpty()) continue;
-            var sig = sigOpt.get();
-            bySig.merge(sig, t, (a, b) -> {
-                Long sa = Optional.ofNullable(a.getResult()).map(Transaction.Result::getSlot).orElse(0L);
-                Long sb = Optional.ofNullable(b.getResult()).map(Transaction.Result::getSlot).orElse(0L);
-                return (sb != null && sb > sa) ? b : a;
-            });
+        if (txs == null || txs.isEmpty()) {
+            return List.of();
         }
-        // Optional: stable order by slot desc, then signature
-        return bySig.values().stream()
-                .sorted(Comparator
-                        .comparing((Transaction x) -> Optional.ofNullable(x.getResult()).map(Transaction.Result::getSlot).orElse(0L))
-                        .reversed()
-                        .thenComparing(x -> primarySignature(x).orElse("")))
-                .toList();
+        
+        try {
+            Map<String, Transaction> bySig = new HashMap<>();
+            for (var t : txs) {
+                if (t == null) continue;
+                
+                var sigOpt = primarySignature(t);
+                if (sigOpt.isEmpty()) continue;
+                var sig = sigOpt.get();
+                bySig.merge(sig, t, (a, b) -> {
+                    Long sa = Optional.ofNullable(a.getResult()).map(Transaction.Result::getSlot).orElse(0L);
+                    Long sb = Optional.ofNullable(b.getResult()).map(Transaction.Result::getSlot).orElse(0L);
+                    return (sb != null && sb > sa) ? b : a;
+                });
+            }
+            // Optional: stable order by slot desc, then signature
+            return bySig.values().stream()
+                    .sorted(Comparator
+                            .comparing((Transaction x) -> Optional.ofNullable(x.getResult()).map(Transaction.Result::getSlot).orElse(0L))
+                            .reversed()
+                            .thenComparing(x -> primarySignature(x).orElse("")))
+                    .toList();
+        } catch (Exception e) {
+            log.error("Error during transaction deduplication: {}", e.getMessage(), e);
+            return txs; // Return original list if dedup fails
+        }
     }
 
     Optional<String> primarySignature(Transaction t) {
@@ -91,7 +205,12 @@ public class NormalizeTransaction {
     }
 
     public List<Row> processToList(List<Transaction> transactions, String wallet) {
-        if (transactions == null || transactions.isEmpty()) return List.of();
+        if (transactions == null || transactions.isEmpty()) {
+            log.warn("No transactions to process for wallet: {}", wallet);
+            return List.of();
+        }
+
+        log.debug("Processing {} transactions to rows for wallet: {}", transactions.size(), wallet);
 
         // ---- tuning constants for multi-hop guard ----
         final BigDecimal EPS = new BigDecimal("0.0000001");       // ignore tiny token dust
@@ -108,47 +227,59 @@ public class NormalizeTransaction {
         Map<String, MetaBits> metaBySig = new HashMap<>();
 
         for (var t : transactions) {
-            if (t == null || t.getResult() == null || t.getResult().getTransaction() == null) continue;
-
-            var res = t.getResult();
-            var tx = res.getTransaction();
-            var sig = firstOrNull(tx.getSignatures());
-            if (sig == null) continue;
-
-            // success filter (status.err == null)
-            var meta = res.getMeta();
-            if (meta == null) continue;
-            var status = meta.getStatus();
-            if (status == null || status.getErr() != null) continue;
-
-            // cache meta bits per signature
-            BigDecimal feeLamports = BigDecimal.valueOf(
-                    Optional.ofNullable(meta.getFee()).orElse(0L)
-            );
-            BigDecimal feeSol = feeLamports.divide(LAMPORTS_PER_SOL, SCALE, RoundingMode.HALF_UP);
-            metaBySig.put(sig, new MetaBits(res.getBlockTime(), res.getSlot(), feeSol));
-
-            var key = new TxKey(sig, wallet);
-            var mintToDelta = deltaByTxMint.computeIfAbsent(key, k -> new HashMap<>());
-
-            // + post balances for this wallet
-            var posts = meta.getPostTokenBalances();
-            if (posts != null) {
-                for (var b : posts) {
-                    if (b != null && Objects.equals(wallet, b.getOwner())) {
-                        mintToDelta.merge(b.getMint(), amountOf(b), BigDecimal::add);
-                    }
-                }
+            if (t == null || t.getResult() == null || t.getResult().getTransaction() == null) {
+                log.trace("Skipping null or invalid transaction");
+                continue;
             }
 
-            // - pre balances for this wallet
-            var pres = meta.getPreTokenBalances();
-            if (pres != null) {
-                for (var b : pres) {
-                    if (b != null && Objects.equals(wallet, b.getOwner())) {
-                        mintToDelta.merge(b.getMint(), amountOf(b).negate(), BigDecimal::add);
+            try {
+                var res = t.getResult();
+                var tx = res.getTransaction();
+                var sig = firstOrNull(tx.getSignatures());
+                if (sig == null) continue;
+
+                // success filter (status.err == null)
+                var meta = res.getMeta();
+                if (meta == null) continue;
+                var status = meta.getStatus();
+                if (status == null || status.getErr() != null) continue;
+
+                // cache meta bits per signature
+                BigDecimal feeLamports = BigDecimal.valueOf(
+                        Optional.ofNullable(meta.getFee()).orElse(0L)
+                );
+                BigDecimal feeSol = feeLamports.divide(LAMPORTS_PER_SOL, SCALE, RoundingMode.HALF_UP);
+                metaBySig.put(sig, new MetaBits(res.getBlockTime(), res.getSlot(), feeSol));
+
+                var key = new TxKey(sig, wallet);
+                var mintToDelta = deltaByTxMint.computeIfAbsent(key, k -> new HashMap<>());
+
+                // + post balances for this wallet
+                var posts = meta.getPostTokenBalances();
+                if (posts != null) {
+                    for (var b : posts) {
+                        if (b != null && Objects.equals(wallet, b.getOwner())) {
+                            mintToDelta.merge(b.getMint(), amountOf(b), BigDecimal::add);
+                        }
                     }
                 }
+
+                // - pre balances for this wallet
+                var pres = meta.getPreTokenBalances();
+                if (pres != null) {
+                    for (var b : pres) {
+                        if (b != null && Objects.equals(wallet, b.getOwner())) {
+                            mintToDelta.merge(b.getMint(), amountOf(b).negate(), BigDecimal::add);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to process transaction {}: {}", 
+                        firstOrNull(Optional.ofNullable(t.getResult())
+                                .map(Transaction.Result::getTransaction)
+                                .map(Transaction.Tx::getSignatures)
+                                .orElse(List.of())), 
+                        e.getMessage());
             }
         }
 
@@ -276,8 +407,6 @@ public class NormalizeTransaction {
     private String firstOrNull(List<String> list) {
         return (list == null || list.isEmpty()) ? null : list.getFirst();
     }
-
-    private Optional<Long> optLong(Long v) { return Optional.ofNullable(v); }
 
     /** choose uiAmountString when present; else amount / 10^decimals */
     private BigDecimal amountOf(Transaction.TokenBalance b) {

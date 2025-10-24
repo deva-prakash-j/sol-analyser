@@ -1,6 +1,7 @@
 package com.sol.service;
 
 import lombok.ToString;
+import lombok.extern.slf4j.Slf4j;
 
 import static com.sol.util.NormalizeTransaction.Row;
 import static com.sol.util.NormalizeTransaction.Side;
@@ -13,6 +14,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
 
+@Slf4j
 public class PnlEngine {
 
     @ToString
@@ -53,10 +55,16 @@ public class PnlEngine {
     private static final BigDecimal ZERO = BigDecimal.ZERO;
 
     public static Result run(List<Row> rows) {
-        // sort by time asc
-        rows.sort(Comparator.comparingLong(Row::blockTime));
+        if (rows == null || rows.isEmpty()) {
+            log.warn("PnlEngine received null or empty rows list");
+            return new Result();
+        }
+        
+        try {
+            // sort by time asc
+            rows.sort(Comparator.comparingLong(Row::blockTime));
 
-        Result res = new Result();
+            Result res = new Result();
 
         for (Row r : rows) {
             if (r.side() == null || r.baseMint() == null) continue;
@@ -129,6 +137,13 @@ public class PnlEngine {
         res.totalFees = res.positions.values().stream()
                 .map(pos -> pos.feesUsd).reduce(ZERO, BigDecimal::add);
         return res;
+        
+        } catch (Exception e) {
+            log.error("Error in PnlEngine.run: {}", e.getMessage(), e);
+            // Return partial result or empty result
+            Result res = new Result();
+            return res;
+        }
     }
 
     /** Helper: average holding period in hours for a position (only over realized qty) */
