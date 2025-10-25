@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.servlet.NoHandlerFoundException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -111,6 +112,25 @@ public class GlobalExceptionHandler {
         body.put("message", ex.getMessage());
         
         return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(NoHandlerFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoHandlerFoundException(NoHandlerFoundException ex) {
+        // Silently ignore favicon.ico and other browser-generated requests
+        if (ex.getRequestURL().contains("favicon.ico")) {
+            log.debug("Ignoring favicon request");
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
+        
+        log.warn("No handler found for: {} {}", ex.getHttpMethod(), ex.getRequestURL());
+        
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("error", "Not Found");
+        body.put("message", "The requested endpoint does not exist");
+        body.put("path", ex.getRequestURL());
+        
+        return new ResponseEntity<>(body, HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler(Exception.class)

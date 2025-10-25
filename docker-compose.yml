@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  sol-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sol-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Spring Profile
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILE:-prod}
+      
+      # Database Configuration
+      SPRING_DATASOURCE_URL: ${DB_URI}
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+      
+      # Redis Configuration
+      SPRING_DATA_REDIS_HOST: redis
+      
+      # Proxy Configuration (WebShare)
+      PROXY_USERNAME: ${PROXY_USERNAME}
+      PROXY_PASSWORD: ${PROXY_PASSWORD}
+      
+      
+      # Application Settings
+      SERVER_PORT: 8080
+      LOGGING_LEVEL_COM_SOL: ${LOG_LEVEL:-INFO}
+      
+      # JVM Options
+      JAVA_OPTS: "-Xmx2g -Xms512m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    
+    ports:
+      - "8080:8080"
+    
+    volumes:
+      - app_logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    networks:
+      - sol-network
+      - monitoring
+
+# Volumes
+volumes:
+  redis_data:
+    driver: local
+  app_logs:
+    driver: local
+
+# Networks
+networks:
+  sol-network:
+    driver: bridge
+  monitoring:
+    external: true
