@@ -7,11 +7,6 @@ services:
       dockerfile: Dockerfile
     container_name: sol-app
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       # Spring Profile
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILE:-prod}
