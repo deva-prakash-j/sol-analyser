@@ -1,10 +1,7 @@
 package com.sol.util;
 
 import com.sol.dto.Transaction;
-import com.sol.service.PnlEngine;
-import com.sol.service.PriceService;
-import com.sol.service.WalletScoringEngine;
-import com.sol.service.WalletScorePersistenceService;
+import com.sol.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,6 +22,7 @@ public class NormalizeTransaction {
     private final PriceService priceService;
     private final WalletScoringEngine scoringEngine;
     private final WalletScorePersistenceService persistenceService;
+    private final UnrealizedPnlService unrealizedPnlService;
 
     private final String solanaMint = "So11111111111111111111111111111111111111112";
 
@@ -55,30 +53,26 @@ public class NormalizeTransaction {
     /** prints rows; keep signature unchanged */
     public void process(List<Transaction> transactions, String wallet) {
         if (transactions == null || transactions.isEmpty()) {
-            log.warn("No transactions provided for normalization for wallet: {}", wallet);
+            log.warn("No transactions provided for wallet: {}", wallet);
             return;
         }
         
         if (wallet == null || wallet.isBlank()) {
-            log.error("Invalid wallet address for normalization");
+            log.error("Invalid wallet address");
             return;
         }
         
         try {
-            log.info("Starting transaction normalization for wallet: {} ({} transactions)", 
-                    wallet, transactions.size());
-            
             List<Row> rows;
             try {
                 rows = processToList(dedupeLatestBySlot(transactions), wallet);
             } catch (Exception e) {
-                log.error("Failed to process transactions to rows for wallet {}: {}", 
-                        wallet, e.getMessage(), e);
+                log.error("Failed to process transactions for {}: {}", wallet, e.getMessage());
                 return;
             }
             
             if (rows == null || rows.isEmpty()) {
-                log.warn("No valid rows after normalization for wallet: {}", wallet);
+                log.warn("No valid transactions for wallet: {}", wallet);
                 return;
             }
             
@@ -88,77 +82,85 @@ public class NormalizeTransaction {
                     .collect(Collectors.toList());
             
             if (rows.isEmpty()) {
-                log.warn("No BUY/SELL rows after filtering for wallet: {}", wallet);
+                log.warn("No tradeable transactions for wallet: {}", wallet);
                 return;
             }
             
-            log.info("Normalized to {} tradeable rows for wallet: {}", rows.size(), wallet);
-            
-            // Calculate PnL - wrap in try-catch to prevent crashes
+            // Calculate PnL
             PnlEngine.Result result;
             try {
                 result = PnlEngine.run(rows);
                 if (result == null) {
-                    log.error("PnL engine returned null result for wallet: {}", wallet);
+                    log.error("PnL calculation failed for {}", wallet);
                     return;
                 }
             } catch (Exception e) {
-                log.error("PnL calculation failed for wallet {}: {}", wallet, e.getMessage(), e);
+                log.error("PnL calculation error for {}: {}", wallet, e.getMessage());
                 return;
             }
             
-            // Calculate metrics - wrap in try-catch to prevent crashes
+            // Calculate unrealized PnL for open positions
+            UnrealizedPnlService.UnrealizedPnlSummary unrealizedPnl = null;
+            try {
+                if (result.openPositions != null && !result.openPositions.isEmpty()) {
+                    unrealizedPnl = unrealizedPnlService.calculateUnrealizedPnl(result.openPositions);
+                }
+            } catch (Exception e) {
+                log.error("Unrealized PnL calculation failed for {}: {}", wallet, e.getMessage());
+            }
+            
+            // Calculate total PnL (realized + unrealized)
+            BigDecimal totalPnl = result.totalRealized;
+            if (unrealizedPnl != null) {
+                totalPnl = totalPnl.add(unrealizedPnl.totalUnrealizedPnl());
+            }
+            
+            // Calculate metrics
             WalletMetricsCalculator.WalletMetrics metrics;
             try {
                 metrics = WalletMetricsCalculator.fromResult(result);
                 if (metrics == null) {
-                    log.error("WalletMetricsCalculator returned null metrics for wallet: {}", wallet);
+                    log.error("Metrics calculation failed for {}", wallet);
                     return;
                 }
             } catch (Exception e) {
-                log.error("Metrics calculation failed for wallet {}: {}", wallet, e.getMessage(), e);
+                log.error("Metrics calculation error for {}: {}", wallet, e.getMessage());
                 return;
             }
             
             try {
                 WalletScoringEngine.ScoringResult score = scoringEngine.scoreWallet(wallet, metrics);
                 
-                // Simplified logging - only key info
-                log.info("✓ Wallet {} | Tier: {} | Score: {}/100 | PnL: ${} | Win Rate: {}% | Copy: {}", 
+                // Format PnL display
+                String pnlDisplay = unrealizedPnl != null 
+                    ? String.format("$%s (R: $%s, U: $%s)", 
+                        totalPnl.setScale(2, RoundingMode.HALF_UP),
+                        result.totalRealized.setScale(2, RoundingMode.HALF_UP),
+                        unrealizedPnl.totalUnrealizedPnl().setScale(2, RoundingMode.HALF_UP))
+                    : String.format("$%s", result.totalRealized.setScale(2, RoundingMode.HALF_UP));
+                
+                log.info("✓ {} | Tier: {} | Score: {} | PnL: {} | WR: {}% | Copy: {}", 
                     wallet.substring(0, 8), 
                     score.tier().label,
                     score.compositeScore(),
-                    metrics.totalRealizedUsd().setScale(2, RoundingMode.HALF_UP),
+                    pnlDisplay,
                     String.format("%.1f", metrics.tradeWinRate()),
                     score.isCopyTradingCandidate() ? "YES" : "NO"
                 );
                 
-                if (!score.passedHardFilters()) {
-                    log.warn("⚠ Wallet {} failed filters: {}", wallet.substring(0, 8), score.failedFilters().get(0));
-                }
-                
-                if (!score.redFlags().isEmpty() && score.compositeScore() >= 60) {
-                    log.warn("⚠ Wallet {} has {} red flag(s)", wallet.substring(0, 8), score.redFlags().size());
-                }
-                
                 // Persist to database
                 try {
                     persistenceService.saveScore(score);
-                    log.debug("Persisted score to database for wallet {}", wallet.substring(0, 8));
                 } catch (Exception e) {
                     log.error("Failed to persist score for {}: {}", wallet.substring(0, 8), e.getMessage());
-                    // Don't stop - persistence failure is not critical
                 }
                 
             } catch (Exception e) {
-                log.error("Wallet scoring failed for {}: {}", wallet, e.getMessage(), e);
-                // Don't stop processing - scoring failure is not critical
+                log.error("Scoring failed for {}: {}", wallet, e.getMessage());
             }
             
         } catch (Exception e) {
-            log.error("FATAL: Unexpected error during transaction processing for wallet {}: {}", 
-                    wallet, e.getMessage(), e);
-            // Swallow exception - don't let it propagate
+            log.error("Processing failed for {}: {}", wallet, e.getMessage());
         }
     }
 

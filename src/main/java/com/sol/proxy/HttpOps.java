@@ -85,14 +85,10 @@ public class HttpOps {
                 .doOnSuccess(response -> {
                     long responseTime = System.currentTimeMillis() - startTime;
                     healthTracker.recordSuccess(proxyIndex, responseTime);
-                    log.debug("GET success for {}{} via proxy {} in {}ms", 
-                            baseUrl, path, proxyIndex, responseTime);
                 })
                 .doOnError(error -> {
-                    long responseTime = System.currentTimeMillis() - startTime;
                     healthTracker.recordFailure(proxyIndex);
-                    log.error("GET request failed for {}{} via proxy {} after {}ms: {}", 
-                            baseUrl, path, proxyIndex, responseTime, error.getMessage());
+                    log.error("GET request failed for {}{}: {}", baseUrl, path, error.getMessage());
                 })
                 .onErrorMap(error -> {
                     if (!(error instanceof SolanaRpcException)) {
@@ -127,14 +123,10 @@ public class HttpOps {
                 .doOnSuccess(response -> {
                     long responseTime = System.currentTimeMillis() - startTime;
                     healthTracker.recordSuccess(proxyIndex, responseTime);
-                    log.debug("POST success for {}{} via proxy {} in {}ms", 
-                            baseUrl, path, proxyIndex, responseTime);
                 })
                 .doOnError(error -> {
-                    long responseTime = System.currentTimeMillis() - startTime;
                     healthTracker.recordFailure(proxyIndex);
-                    log.error("POST request failed for {}{} via proxy {} after {}ms: {}", 
-                            baseUrl, path, proxyIndex, responseTime, error.getMessage());
+                    log.error("POST request failed for {}{}: {}", baseUrl, path, error.getMessage());
                 })
                 .onErrorMap(error -> {
                     if (!(error instanceof SolanaRpcException)) {

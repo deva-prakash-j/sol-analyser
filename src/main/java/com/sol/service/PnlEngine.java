@@ -42,6 +42,23 @@ public class PnlEngine {
     }
 
     @ToString
+    public static class OpenPosition {
+        public String mint;
+        public BigDecimal quantity;           // Current holding amount
+        public BigDecimal avgBoughtPrice;     // Average cost per unit (USD)
+        public BigDecimal totalFees;          // Total fees paid for this position
+        public BigDecimal costBasis;          // Total USD invested (quantity * avgBoughtPrice)
+        
+        public OpenPosition(String mint, BigDecimal quantity, BigDecimal avgBoughtPrice, BigDecimal totalFees) {
+            this.mint = mint;
+            this.quantity = quantity;
+            this.avgBoughtPrice = avgBoughtPrice;
+            this.totalFees = totalFees;
+            this.costBasis = quantity.multiply(avgBoughtPrice, MC);
+        }
+    }
+    
+    @ToString
     public static class Result {
         public Map<String, Position> positions = new HashMap<>();  // mint -> position
         public Map<LocalDate, BigDecimal> realizedPnlByDay = new TreeMap<>();
@@ -49,6 +66,7 @@ public class PnlEngine {
         public BigDecimal totalRealized = BigDecimal.ZERO;
         public BigDecimal totalFees = BigDecimal.ZERO;
         public List<BigDecimal> tradePnls = new ArrayList<>();
+        public List<OpenPosition> openPositions = new ArrayList<>();  // Currently held positions
     }
 
     private static final MathContext MC = new MathContext(18, RoundingMode.HALF_UP);
@@ -136,6 +154,30 @@ public class PnlEngine {
                 .map(pos -> pos.realizedPnlUsd).reduce(ZERO, BigDecimal::add);
         res.totalFees = res.positions.values().stream()
                 .map(pos -> pos.feesUsd).reduce(ZERO, BigDecimal::add);
+        
+        // Calculate open positions (remaining FIFO lots)
+        for (Position pos : res.positions.values()) {
+            if (pos.fifo.isEmpty()) continue;
+            
+            BigDecimal totalQty = ZERO;
+            BigDecimal totalCost = ZERO;
+            
+            // Sum up all remaining lots
+            for (Lot lot : pos.fifo) {
+                totalQty = totalQty.add(lot.qty, MC);
+                totalCost = totalCost.add(lot.qty.multiply(lot.costPerUnitUsd, MC), MC);
+            }
+            
+            if (totalQty.compareTo(ZERO) > 0) {
+                BigDecimal avgPrice = totalCost.divide(totalQty, MC);
+                // Note: pos.feesUsd includes fees from both buys and sells for this position
+                res.openPositions.add(new OpenPosition(pos.mint, totalQty, avgPrice, pos.feesUsd));
+            }
+        }
+        
+        log.debug("PnL calculation complete: {} positions, {} open positions, total realized: ${}", 
+            res.positions.size(), res.openPositions.size(), res.totalRealized);
+        
         return res;
         
         } catch (Exception e) {

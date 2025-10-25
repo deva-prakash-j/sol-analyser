@@ -63,11 +63,6 @@ public class BatchProcessor {
         // Adaptive: min 10, max 100, or batchSize/5
         int lanes = Math.max(MIN_LANES, Math.min(MAX_LANES, batchSize / BATCH_SIZE_DIVISOR));
         
-        log.info("Processing {} items with {} adaptive lanes (health-aware proxy selection)", 
-                batchSize, lanes);
-        
-        long startTime = System.currentTimeMillis();
-        
         return Flux.fromIterable(inputs)
                 .buffer(lanes)
                 .concatMap(batch -> {
@@ -75,13 +70,6 @@ public class BatchProcessor {
                     List<WebClient> clients = pool.sliceHealthAware(baseUrl, batch.size(), healthTracker);
                     return Flux.range(0, batch.size())
                             .flatMap(i -> op.apply(clients.get(i), batch.get(i)), /*concurrency*/ batch.size());
-                })
-                .doOnComplete(() -> {
-                    long elapsed = System.currentTimeMillis() - startTime;
-                    double throughput = batchSize * 1000.0 / elapsed;
-                    log.info("Batch complete: {} items in {}ms ({:.1f} req/s) - Health: {}", 
-                            batchSize, elapsed, throughput, 
-                            healthTracker.getSummary(pool.size()));
                 });
     }
 }

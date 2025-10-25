@@ -13,11 +13,16 @@ import java.time.LocalDateTime;
  * Main wallet scoring results - stores composite scores and tier classification
  */
 @Entity
-@Table(name = "wallet_scores", indexes = {
-    @Index(name = "idx_wallet_score", columnList = "wallet_address, scored_at DESC"),
-    @Index(name = "idx_tier_score", columnList = "tier, composite_score DESC"),
-    @Index(name = "idx_copy_candidate", columnList = "is_copy_candidate, composite_score DESC")
-})
+@Table(name = "wallet_scores", 
+    indexes = {
+        @Index(name = "idx_wallet_score", columnList = "wallet_address, scored_at DESC"),
+        @Index(name = "idx_tier_score", columnList = "tier, composite_score DESC"),
+        @Index(name = "idx_copy_candidate", columnList = "is_copy_candidate, composite_score DESC")
+    },
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uk_wallet_address", columnNames = {"wallet_address"})
+    }
+)
 @Data
 @Builder
 @NoArgsConstructor

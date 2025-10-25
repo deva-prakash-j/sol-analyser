@@ -31,7 +31,21 @@ public class WalletScorePersistenceService {
     @Transactional
     public WalletScore saveScore(ScoringResult result) {
         try {
-            WalletScore entity = convertToEntity(result);
+            // Check if wallet already has a score - update instead of insert
+            WalletScore entity = scoreRepository.findFirstByWalletAddressOrderByScoredAtDesc(result.walletAddress())
+                .map(existing -> {
+                    log.debug("Updating existing score for wallet {}", result.walletAddress().substring(0, 8));
+                    return updateEntity(existing, result);
+                })
+                .orElseGet(() -> {
+                    log.debug("Creating new score for wallet {}", result.walletAddress().substring(0, 8));
+                    try {
+                        return convertToEntity(result);
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException("Failed to convert to entity", e);
+                    }
+                });
+            
             WalletScore saved = scoreRepository.save(entity);
             log.debug("Saved score for wallet {}: Tier={}, Score={}", 
                 result.walletAddress().substring(0, 8), 
@@ -127,6 +141,82 @@ public class WalletScorePersistenceService {
         metricsEntity.setWalletScore(scoreEntity);
         
         return scoreEntity;
+    }
+    
+    /**
+     * Update existing entity with new scoring results
+     */
+    private WalletScore updateEntity(WalletScore existing, ScoringResult result) {
+        try {
+            var m = result.metrics();
+            
+            // Update score fields
+            existing.setScoredAt(LocalDateTime.now());
+            existing.setCompositeScore(result.compositeScore());
+            existing.setTier(result.tier().label);
+            existing.setTierDescription(result.tier().description);
+            existing.setIsCopyCandidate(result.isCopyTradingCandidate());
+            existing.setIsEliteCandidate(result.isEliteCandidate());
+            existing.setPassedHardFilters(result.passedHardFilters());
+            existing.setScoreProfitability(BigDecimal.valueOf(result.categoryScores().getOrDefault("profitability", 0.0)));
+            existing.setScoreConsistency(BigDecimal.valueOf(result.categoryScores().getOrDefault("consistency", 0.0)));
+            existing.setScoreRiskManagement(BigDecimal.valueOf(result.categoryScores().getOrDefault("riskManagement", 0.0)));
+            existing.setScoreRecentPerformance(BigDecimal.valueOf(result.categoryScores().getOrDefault("recentPerformance", 0.0)));
+            existing.setScoreTradeExecution(BigDecimal.valueOf(result.categoryScores().getOrDefault("tradeExecution", 0.0)));
+            existing.setScoreActivityLevel(BigDecimal.valueOf(result.categoryScores().getOrDefault("activityLevel", 0.0)));
+            existing.setRedFlagsCount(result.redFlags().size());
+            existing.setRedFlagsJson(objectMapper.writeValueAsString(result.redFlags()));
+            existing.setFailedFiltersJson(objectMapper.writeValueAsString(result.failedFilters()));
+            existing.setRecommendation(result.recommendation());
+            
+            // Update metrics
+            var metrics = existing.getMetrics();
+            metrics.setTotalVolumeUsd(m.totalVolumeUsd());
+            metrics.setTotalRealizedUsd(m.totalRealizedUsd());
+            metrics.setTotalFeesUsd(m.totalFeesUsd());
+            metrics.setPnlPct(m.pnlPct());
+            metrics.setProfitFactor(m.profitFactor());
+            metrics.setFeeRatio(m.feeRatio());
+            metrics.setMaxDrawdownUsd(m.maxDrawdownUsd());
+            metrics.setSharpeLikeDaily(m.sharpeLikeDaily());
+            metrics.setAvgHoldingHoursWeighted(m.avgHoldingHoursWeighted());
+            metrics.setDaysCount(m.daysCount());
+            metrics.setDailyWinRatePct(m.dailyWinRatePct());
+            metrics.setRecoveryFactor(m.recoveryFactor());
+            metrics.setMaxConsecutiveLosses(m.maxConsecutiveLosses());
+            metrics.setMaxConsecutiveWins(m.maxConsecutiveWins());
+            metrics.setAvgWinningTrade(m.avgWinningTrade());
+            metrics.setAvgLosingTrade(m.avgLosingTrade());
+            metrics.setWinLossRatio(m.winLossRatio());
+            metrics.setCalmarRatio(m.calmarRatio());
+            metrics.setSortinoRatio(m.sortinoRatio());
+            metrics.setLargestWinUsd(m.largestWinUsd());
+            metrics.setLargestLossUsd(m.largestLossUsd());
+            metrics.setMonthlyWinRate(m.monthlyWinRate());
+            metrics.setLongestDrawdownDays(m.longestDrawdownDays());
+            metrics.setStdDevDailyReturns(m.stdDevDailyReturns());
+            metrics.setStdDevMonthlyReturns(m.stdDevMonthlyReturns());
+            metrics.setTotalTrades(m.totalTrades());
+            metrics.setWinningTrades(m.winningTrades());
+            metrics.setLosingTrades(m.losingTrades());
+            metrics.setTradeWinRate(m.tradeWinRate());
+            metrics.setTradesPerDay(m.tradesPerDay());
+            metrics.setAvgTradeSize(m.avgTradeSize());
+            metrics.setMedianTradeSize(m.medianTradeSize());
+            metrics.setLast7DaysPnl(m.last7DaysPnl());
+            metrics.setLast30DaysPnl(m.last30DaysPnl());
+            metrics.setLast7DaysWinRate(m.last7DaysWinRate());
+            metrics.setLast30DaysWinRate(m.last30DaysWinRate());
+            metrics.setLast30DaysTrades(m.last30DaysTrades());
+            metrics.setAvgHoldingHoursWinners(m.avgHoldingHoursWinners());
+            metrics.setAvgHoldingHoursLosers(m.avgHoldingHoursLosers());
+            metrics.setGrossProfitUsd(m.grossProfitUsd());
+            metrics.setGrossLossUsd(m.grossLossUsd());
+            
+            return existing;
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize JSON fields", e);
+        }
     }
     
     /**
