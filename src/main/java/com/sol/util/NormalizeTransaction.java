@@ -62,6 +62,9 @@ public class NormalizeTransaction {
             return;
         }
         
+        // Capture total signature count BEFORE deduplication
+        int totalSignatures = transactions.size();
+        
         try {
             List<Row> rows;
             try {
@@ -129,7 +132,8 @@ public class NormalizeTransaction {
             }
             
             try {
-                WalletScoringEngine.ScoringResult score = scoringEngine.scoreWallet(wallet, metrics);
+                // Score wallet with advanced validation (bot detection, wash trading, account age, signature limit, MEV, priority fees)
+                WalletScoringEngine.ScoringResult score = scoringEngine.scoreWallet(wallet, metrics, rows, transactions, totalSignatures);
                 
                 // Format PnL display
                 String pnlDisplay = unrealizedPnl != null 
@@ -139,14 +143,30 @@ public class NormalizeTransaction {
                         unrealizedPnl.totalUnrealizedPnl().setScale(2, RoundingMode.HALF_UP))
                     : String.format("$%s", result.totalRealized.setScale(2, RoundingMode.HALF_UP));
                 
-                log.info("✓ {} | Tier: {} | Score: {} | PnL: {} | WR: {}% | Copy: {}", 
-                    wallet.substring(0, 8), 
-                    score.tier().label,
-                    score.compositeScore(),
-                    pnlDisplay,
-                    String.format("%.1f", metrics.tradeWinRate()),
-                    score.isCopyTradingCandidate() ? "YES" : "NO"
-                );
+                // Log wallet result with rejection reason if failed
+                if (!score.passedHardFilters() || score.tier() == WalletScoringEngine.ConfidenceTier.F) {
+                    String rejectionReason = score.failedFilters().isEmpty() 
+                        ? "Failed scoring criteria" 
+                        : score.failedFilters().get(0); // First failure reason
+                    
+                    log.info("✗ {} | Tier: {} | Score: {} | PnL: {} | WR: {}% | Copy: NO | Reason: {}", 
+                        wallet.substring(0, 8), 
+                        score.tier().label,
+                        score.compositeScore(),
+                        pnlDisplay,
+                        String.format("%.1f", metrics.tradeWinRate()),
+                        rejectionReason
+                    );
+                } else {
+                    log.info("✓ {} | Tier: {} | Score: {} | PnL: {} | WR: {}% | Copy: {}", 
+                        wallet.substring(0, 8), 
+                        score.tier().label,
+                        score.compositeScore(),
+                        pnlDisplay,
+                        String.format("%.1f", metrics.tradeWinRate()),
+                        score.isCopyTradingCandidate() ? "YES" : "NO"
+                    );
+                }
                 
                 // Persist to database
                 try {

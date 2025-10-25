@@ -89,8 +89,6 @@ public class WalletService {
                 return;
             }
             
-            log.info("[Stage 3/5] Fetched {} unique signatures", signatures.size());
-            
             // Stage 4: Fetch transactions
             currentStage = "fetch_transactions";
             log.info("[Stage 4/5] Fetching full transaction details");

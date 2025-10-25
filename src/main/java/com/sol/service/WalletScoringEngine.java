@@ -1,6 +1,7 @@
 package com.sol.service;
 
 import com.sol.util.WalletMetricsCalculator.WalletMetrics;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -19,10 +20,13 @@ import java.util.*;
  * Target: Identify wallets with 80%+ win rate potential for copy trading
  */
 @Service
+@RequiredArgsConstructor
 public class WalletScoringEngine {
     private static final Logger log = LoggerFactory.getLogger(WalletScoringEngine.class);
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final int SCALE = 4;
+    
+    private final WalletValidationService validationService;
 
     /**
      * Confidence tier classification for copy trading
@@ -82,7 +86,75 @@ public class WalletScoringEngine {
     }
 
     /**
-     * Main scoring entry point
+     * Main scoring entry point with advanced validation (including priority fee analysis)
+     */
+    public ScoringResult scoreWallet(String walletAddress, WalletMetrics metrics, 
+                                     List<com.sol.util.NormalizeTransaction.Row> rows,
+                                     List<com.sol.dto.Transaction> transactions,
+                                     int totalSignatures) {
+        if (metrics == null) {
+            return createFailedResult(walletAddress, null, List.of("Null metrics"));
+        }
+
+        try {
+            // Stage 0: Advanced Validation (bot detection, wash trading, account age, signature limit, MEV, priority fees)
+            WalletValidationService.ValidationResult validation = 
+                validationService.validateWallet(rows, transactions, totalSignatures, metrics);
+            
+            if (!validation.passed()) {
+                return createFailedResult(walletAddress, metrics, validation.failures());
+            }
+            
+            // Stage 1: Hard Filters
+            List<String> failedFilters = applyHardFilters(metrics);
+            if (!failedFilters.isEmpty()) {
+                return createFailedResult(walletAddress, metrics, failedFilters);
+            }
+
+            // Stage 2: Composite Scoring
+            Map<String, Double> categoryScores = calculateCategoryScores(metrics);
+            int compositeScore = calculateCompositeScore(categoryScores);
+
+            // Stage 3: Confidence Tier
+            ConfidenceTier tier = ConfidenceTier.fromScore(compositeScore);
+
+            // Red Flag Analysis
+            Map<String, String> redFlags = detectRedFlags(metrics);
+
+            // Generate Recommendation
+            String recommendation = generateRecommendation(tier, redFlags, metrics);
+
+            return new ScoringResult(
+                    walletAddress,
+                    true,
+                    List.of(),
+                    compositeScore,
+                    tier,
+                    categoryScores,
+                    redFlags,
+                    metrics,
+                    recommendation
+            );
+
+        } catch (Exception e) {
+            log.error("Error scoring wallet {}: {}", walletAddress, e.getMessage(), e);
+            return createFailedResult(walletAddress, metrics, 
+                List.of("Scoring error: " + e.getMessage()));
+        }
+    }
+    
+    /**
+     * Backward compatible scoring entry point (without priority fee analysis)
+     */
+    public ScoringResult scoreWallet(String walletAddress, WalletMetrics metrics, 
+                                     List<com.sol.util.NormalizeTransaction.Row> rows,
+                                     int totalSignatures) {
+        return scoreWallet(walletAddress, metrics, rows, null, totalSignatures);
+    }
+    
+    /**
+     * Main scoring entry point (without advanced validation)
+     * Use this when rows are not available
      */
     public ScoringResult scoreWallet(String walletAddress, WalletMetrics metrics) {
         if (metrics == null) {
