@@ -33,11 +33,18 @@ public class ProxyPool {
         return clients.get(idx);
     }
 
-    // base URL–scoped rotation (keeps independent “lanes” per base URL)
+    // base URL–scoped rotation (keeps independent "lanes" per base URL)
     public WebClient next(String baseUrl) {
         AtomicInteger c = cursorByBase.computeIfAbsent(norm(baseUrl), k -> new AtomicInteger(0));
         int idx = Math.floorMod(c.getAndIncrement(), clients.size());
         return clients.get(idx);
+    }
+    
+    // Get the last proxy index used for a base URL (for health tracking)
+    public int getLastProxyIndex(String baseUrl) {
+        AtomicInteger c = cursorByBase.get(norm(baseUrl));
+        if (c == null) return 0;
+        return Math.floorMod(c.get() - 1, clients.size());
     }
 
     // get N distinct clients for a batch (base URL–scoped)
@@ -47,6 +54,31 @@ public class ProxyPool {
         return IntStream.range(0, size)
                 .mapToObj(i -> clients.get(Math.floorMod(start + i, clients.size())))
                 .toList();
+    }
+    
+    // Get N distinct clients prioritizing healthy proxies (requires health tracker)
+    public List<WebClient> sliceHealthAware(String baseUrl, int size, ProxyHealthTracker healthTracker) {
+        List<Integer> healthyIndices = healthTracker.getHealthyProxyIndices();
+        
+        // If we have enough healthy proxies, use only those
+        if (healthyIndices.size() >= size) {
+            AtomicInteger c = cursorByBase.computeIfAbsent(norm(baseUrl), k -> new AtomicInteger(0));
+            int start = c.getAndIncrement();
+            return IntStream.range(0, size)
+                    .mapToObj(i -> {
+                        int healthyIdx = Math.floorMod(start + i, healthyIndices.size());
+                        return clients.get(healthyIndices.get(healthyIdx));
+                    })
+                    .toList();
+        }
+        
+        // Fallback to all proxies if not enough healthy ones
+        return slice(baseUrl, size);
+    }
+    
+    // Get WebClient by index (for health tracking)
+    public WebClient getByIndex(int index) {
+        return clients.get(index);
     }
 
     private String norm(String baseUrl) {

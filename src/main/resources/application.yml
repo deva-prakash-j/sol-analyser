@@ -44,11 +44,22 @@ proxy-pool:
   port: 80
   usernamePrefix: ${PROXY_USERNAME}
   startIndex: 1
-  count: 100
+  count: 250
   password: ${PROXY_PASSWORD}
-  perProxyMaxConnections: 1
+  # Increased to 3 connections per proxy (conservative for RPC stability)
+  perProxyMaxConnections: 3
+  # Keep generous timeouts for Solana RPC variability (10-30s response times are normal)
   connectTimeoutMs: 10000
   responseTimeoutMs: 30000
   readTimeoutSec: 30
   writeTimeoutSec: 30
   enableMetrics: true
+  
+  # Health tracking configuration
+  health:
+    # Mark proxy unhealthy after 5 consecutive failures
+    failureThreshold: 5
+    # Open circuit breaker after 10 consecutive failures
+    circuitOpenThreshold: 10
+    # Recovery window: try half-open state after 60s
+    recoveryWindowMs: 60000

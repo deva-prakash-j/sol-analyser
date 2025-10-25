@@ -120,7 +120,6 @@ public class NormalizeTransaction {
                 return;
             }
             
-            // Score wallet for copy trading - wrap in try-catch to prevent crashes
             try {
                 WalletScoringEngine.ScoringResult score = scoringEngine.scoreWallet(wallet, metrics);
                 

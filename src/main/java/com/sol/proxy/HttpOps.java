@@ -5,6 +5,7 @@ import com.sol.exception.SolanaRpcException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
@@ -18,14 +19,16 @@ import java.util.concurrent.TimeoutException;
 public class HttpOps {
 
     private final ProxyPool pool;
+    private final ProxyHealthTracker healthTracker;
     private final Retry retry;
     private static final int MAX_RETRIES = 3;
 
-    public HttpOps(ProxyPool pool) {
+    public HttpOps(ProxyPool pool, ProxyHealthTracker healthTracker) {
         this.pool = pool;
-        // 3 attempts, exponential with jitter; only retry on transient statuses
+        this.healthTracker = healthTracker;
+        // Exponential backoff: 500ms initial, 5s max, 0.5 jitter for Solana RPC variability
         this.retry = Retry
-                .backoff(MAX_RETRIES, Duration.ofMillis(3000))
+                .backoff(MAX_RETRIES, Duration.ofMillis(500))
                 .maxBackoff(Duration.ofSeconds(5))
                 .jitter(0.5)
                 .filter(this::isRetryable)
@@ -43,16 +46,26 @@ public class HttpOps {
     }
 
     private boolean isRetryable(Throwable t) {
-        return ((t instanceof TimeoutException)
-                || (t instanceof ConnectException)
-                || (t instanceof reactor.netty.http.client.PrematureCloseException)
-                || (t instanceof io.netty.handler.proxy.ProxyConnectException)
-                || (t instanceof io.netty.handler.ssl.SslHandshakeTimeoutException)
-                || (t.getClass().getName().contains("ReadTimeoutException"))
-                || (t.getClass().getName().contains("IOException"))
-                || (t.getClass().getName().contains("WebClientRequestException"))
-                || (t.getClass().getName().contains("WebClientResponseException")
-                && !(t.getMessage() != null && t.getMessage().contains("4xx"))));
+        // Retry on network errors and timeouts
+        if (t instanceof TimeoutException
+                || t instanceof ConnectException
+                || t instanceof reactor.netty.http.client.PrematureCloseException
+                || t instanceof io.netty.handler.proxy.ProxyConnectException
+                || t instanceof io.netty.handler.ssl.SslHandshakeTimeoutException
+                || t.getClass().getName().contains("ReadTimeoutException")
+                || t.getClass().getName().contains("IOException")
+                || t.getClass().getName().contains("WebClientRequestException")) {
+            return true;
+        }
+        
+        // Retry on specific HTTP error codes: 429 (rate limit), 500, 502, 503, 504
+        if (t instanceof WebClientResponseException) {
+            WebClientResponseException wcre = (WebClientResponseException) t;
+            int status = wcre.getStatusCode().value();
+            return status == 429 || status == 500 || status == 502 || status == 503 || status == 504;
+        }
+        
+        return false;
     }
 
     public Mono<String> getOnce(String baseUrl, String path, Map<String, String> headers) {
@@ -61,13 +74,26 @@ public class HttpOps {
         }
         
         WebClient client = pool.next(baseUrl);
+        int proxyIndex = pool.getLastProxyIndex(baseUrl);
+        long startTime = System.currentTimeMillis();
+        
         return client.get()
                 .uri(baseUrl + path)                 // absolute URI; no baseUrl on builder needed
                 .headers(h -> headers.forEach(h::add))
                 .retrieve()
                 .bodyToMono(String.class)
-                .doOnError(error -> log.error("GET request failed for {}{}: {}", 
-                        baseUrl, path, error.getMessage()))
+                .doOnSuccess(response -> {
+                    long responseTime = System.currentTimeMillis() - startTime;
+                    healthTracker.recordSuccess(proxyIndex, responseTime);
+                    log.debug("GET success for {}{} via proxy {} in {}ms", 
+                            baseUrl, path, proxyIndex, responseTime);
+                })
+                .doOnError(error -> {
+                    long responseTime = System.currentTimeMillis() - startTime;
+                    healthTracker.recordFailure(proxyIndex);
+                    log.error("GET request failed for {}{} via proxy {} after {}ms: {}", 
+                            baseUrl, path, proxyIndex, responseTime, error.getMessage());
+                })
                 .onErrorMap(error -> {
                     if (!(error instanceof SolanaRpcException)) {
                         return new SolanaRpcException("GET request failed", error);
@@ -89,14 +115,27 @@ public class HttpOps {
         }
         
         WebClient client = pool.next(baseUrl);
+        int proxyIndex = pool.getLastProxyIndex(baseUrl);
+        long startTime = System.currentTimeMillis();
+        
         return client.post()
                 .uri(baseUrl + path)
                 .headers(h -> headers.forEach(h::add))
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(type)
-                .doOnError(error -> log.error("POST request failed for {}{}: {}", 
-                        baseUrl, path, error.getMessage()))
+                .doOnSuccess(response -> {
+                    long responseTime = System.currentTimeMillis() - startTime;
+                    healthTracker.recordSuccess(proxyIndex, responseTime);
+                    log.debug("POST success for {}{} via proxy {} in {}ms", 
+                            baseUrl, path, proxyIndex, responseTime);
+                })
+                .doOnError(error -> {
+                    long responseTime = System.currentTimeMillis() - startTime;
+                    healthTracker.recordFailure(proxyIndex);
+                    log.error("POST request failed for {}{} via proxy {} after {}ms: {}", 
+                            baseUrl, path, proxyIndex, responseTime, error.getMessage());
+                })
                 .onErrorMap(error -> {
                     if (!(error instanceof SolanaRpcException)) {
                         return new SolanaRpcException("POST request failed", error);

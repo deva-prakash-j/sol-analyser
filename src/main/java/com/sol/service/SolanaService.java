@@ -174,7 +174,7 @@ public class SolanaService {
         
         try {
             List<Transaction> transactions = batchProcessor
-                    .processInLanes(SOLANA_RPC_URL, signatures, 40, this::getTransaction)
+                    .processInLanes(SOLANA_RPC_URL, signatures, 60, this::getTransaction)
                     .collectList()
                     .block();
             
