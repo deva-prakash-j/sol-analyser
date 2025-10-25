@@ -22,7 +22,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
       
       # Redis Configuration
-      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_HOST: sol-redis
       
       # Proxy Configuration (WebShare)
       PROXY_USERNAME: ${PROXY_USERNAME}
@@ -50,19 +50,14 @@ services:
       start_period: 60s
     
     networks:
-      - sol-network
       - monitoring
 
 # Volumes
 volumes:
-  redis_data:
-    driver: local
   app_logs:
     driver: local
 
 # Networks
 networks:
-  sol-network:
-    driver: bridge
   monitoring:
     external: true
