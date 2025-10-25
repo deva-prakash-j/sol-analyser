@@ -6,6 +6,7 @@ spring:
     port: 5672
     username: dpraka15
     password: ${RMQ_PWD}
+    virtual-host: app
     listener:
       simple:
         acknowledge-mode: auto
