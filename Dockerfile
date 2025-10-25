@@ -3,18 +3,24 @@ FROM gradle:8.5-jdk21 AS build
 
 WORKDIR /app
 
-# Copy gradle files
-COPY build.gradle settings.gradle ./
+# Copy gradle wrapper files
+COPY gradlew ./
 COPY gradle ./gradle
 
+# Copy gradle files
+COPY build.gradle settings.gradle ./
+
+# Make gradlew executable
+RUN chmod +x gradlew
+
 # Download dependencies (cached layer)
-RUN gradle dependencies --no-daemon || true
+RUN ./gradlew dependencies --no-daemon || true
 
 # Copy source code
 COPY src ./src
 
 # Build the application
-RUN gradle bootJar --no-daemon -x test
+RUN ./gradlew bootJar --no-daemon -x test
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine
