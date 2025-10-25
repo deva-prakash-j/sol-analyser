@@ -1,6 +1,5 @@
 package com.sol.config;
 
-import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.MessageConverter;
@@ -12,11 +11,6 @@ import org.springframework.context.annotation.Configuration;
 public class RabbitMQConfig {
 
     public static final String WALLETS_QUEUE = "wallets";
-
-    @Bean
-    public Queue walletsQueue() {
-        return new Queue(WALLETS_QUEUE, true); // durable queue
-    }
 
     @Bean
     public MessageConverter messageConverter() {

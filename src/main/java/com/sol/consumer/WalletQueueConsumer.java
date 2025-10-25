@@ -1,5 +1,7 @@
 package com.sol.consumer;
 
+import com.sol.service.WalletService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -9,19 +11,25 @@ import java.nio.charset.StandardCharsets;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class WalletQueueConsumer {
 
-    @RabbitListener(queues = "wallets")
+    private final WalletService walletService;
+
+    @RabbitListener(queues = "wallets", concurrency = "1")
     public void consumeWalletMessage(Message message) {
         try {
-            String body = new String(message.getBody(), StandardCharsets.UTF_8);
+            String wallet = new String(message.getBody(), StandardCharsets.UTF_8);
             log.info("========================================");
-            log.info("Received message from 'wallets' queue:");
-            log.info("Message: {}", body);
-            log.info("Message Properties: {}", message.getMessageProperties());
+            log.info("Received wallet from 'wallets' queue: {}", wallet);
             log.info("========================================");
+            
+            // Process wallet synchronously
+            walletService.processWalletSafely(wallet);
+            
+            log.info("Successfully processed wallet: {}", wallet);
         } catch (Exception e) {
-            log.error("Error processing message: {}", e.getMessage(), e);
+            log.error("Error processing wallet message: {}", e.getMessage(), e);
         }
     }
 }
