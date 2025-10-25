@@ -1,6 +1,19 @@
 spring:
   application:
     name: sol
+  rabbitmq:
+    host: rabbitmq
+    port: 5672
+    username: dpraka15
+    password: ${RMQ_PWD}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        prefetch: 1
+        retry:
+          enabled: true
+          initial-interval: 3000
+          max-attempts: 3
   web:
     resources:
       add-mappings: false

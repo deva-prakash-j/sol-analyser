@@ -21,8 +21,8 @@ public class StartupService {
      * Async processing ensures application starts successfully even if wallet processing fails.
      * Changed from @PostConstruct to @EventListener to decouple from bean initialization.
      */
-    @EventListener(ApplicationReadyEvent.class)
-    @Async
+    //@EventListener(ApplicationReadyEvent.class)
+    //@Async
     public void startup() {
         log.info("=== Application Ready - Starting Async Wallet Processing ===");
         

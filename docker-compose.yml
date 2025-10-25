@@ -11,6 +11,7 @@ services:
     environment:
       # Spring Profile
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILE:-prod}
+      RMQ_PWD: ${RMQ_PWD}
       
       # Database Configuration
       SPRING_DATASOURCE_URL: ${DB_URI}
