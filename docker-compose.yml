@@ -14,8 +14,8 @@ services:
       
       # Database Configuration
       SPRING_DATASOURCE_URL: ${DB_URI}
-      SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
       
       # Redis Configuration
       SPRING_DATA_REDIS_HOST: sol-redis
