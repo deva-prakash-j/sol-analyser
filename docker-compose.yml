@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: sol-app
     restart: unless-stopped
     environment:
