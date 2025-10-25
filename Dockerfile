@@ -21,8 +21,13 @@ FROM eclipse-temurin:21-jre-alpine
 
 WORKDIR /app
 
-# Install curl for healthchecks
-RUN apk add --no-cache curl
+# Install curl for healthchecks with retry logic
+RUN apk update --no-cache || \
+    (echo "Retrying with different mirror..." && \
+     echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/main" > /etc/apk/repositories && \
+     echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories && \
+     apk update --no-cache) && \
+    apk add --no-cache curl
 
 # Create non-root user
 RUN addgroup -S spring && adduser -S spring -G spring
