@@ -517,10 +517,9 @@ public class WalletScoringEngine {
         else score += 10;
 
         // Days Count (0-30 points)
-        if (m.daysCount() >= 90) score += 30;
-        else if (m.daysCount() >= 60) score += 25;
-        else if (m.daysCount() >= 30) score += 20;
-        else if (m.daysCount() >= 14) score += 15;
+        if (m.daysCount() >= 60) score += 30;
+        else if (m.daysCount() >= 30) score += 25;
+        else if (m.daysCount() >= 14) score += 20;
         else score += 10;
 
         // Trades Per Day (0-20 points) - moderate frequency preferred
