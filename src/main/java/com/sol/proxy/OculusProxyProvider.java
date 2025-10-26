@@ -170,7 +170,7 @@ public class OculusProxyProvider {
             requestBody.put("enableSock5", false);
             requestBody.put("whiteListIP", List.of(cachedPublicIp));
             requestBody.put("planType", planType);
-
+            System.out.println(requestBody);
             log.info("Requesting {} proxies from {} (country rotation)", count, selectedCountry.toUpperCase());
 
             String response = webClient.post()
