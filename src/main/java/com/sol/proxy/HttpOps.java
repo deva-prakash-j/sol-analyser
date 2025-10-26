@@ -26,14 +26,14 @@ public class HttpOps {
     public HttpOps(ProxyPool pool, ProxyHealthTracker healthTracker) {
         this.pool = pool;
         this.healthTracker = healthTracker;
-        // Exponential backoff: 500ms initial, 5s max, 0.5 jitter for Solana RPC variability
+        // Backoff optimized for proxy rotation: each retry uses a different proxy
         this.retry = Retry
-                .backoff(MAX_RETRIES, Duration.ofMillis(500))
-                .maxBackoff(Duration.ofSeconds(5))
+                .backoff(MAX_RETRIES, Duration.ofSeconds(1))
+                .maxBackoff(Duration.ofSeconds(10))
                 .jitter(0.5)
                 .filter(this::isRetryable)
                 .doBeforeRetry(signal -> {
-                    log.warn("Retrying request (attempt {}/{}): {}", 
+                    log.warn("Retrying request with new proxy (attempt {}/{}): {}", 
                             signal.totalRetries() + 1, MAX_RETRIES, 
                             signal.failure().getMessage());
                 })
@@ -110,31 +110,33 @@ public class HttpOps {
             return Mono.error(new IllegalArgumentException("Response type cannot be null"));
         }
         
-        WebClient client = pool.next(baseUrl);
-        int proxyIndex = pool.getLastProxyIndex(baseUrl);
-        long startTime = System.currentTimeMillis();
-        
-        return client.post()
-                .uri(baseUrl + path)
-                .headers(h -> headers.forEach(h::add))
-                .bodyValue(body)
-                .retrieve()
-                .bodyToMono(type)
-                .doOnSuccess(response -> {
-                    long responseTime = System.currentTimeMillis() - startTime;
-                    healthTracker.recordSuccess(proxyIndex, responseTime);
-                })
-                .doOnError(error -> {
-                    healthTracker.recordFailure(proxyIndex);
-                    log.error("POST request failed for {}{}: {}", baseUrl, path, error.getMessage());
-                })
-                .onErrorMap(error -> {
-                    if (!(error instanceof SolanaRpcException)) {
-                        return new SolanaRpcException("POST request failed", error);
-                    }
-                    return error;
-                })
-                .retryWhen(retry);
+        return Mono.defer(() -> {
+            WebClient client = pool.next(baseUrl);
+            int proxyIndex = pool.getLastProxyIndex(baseUrl);
+            long startTime = System.currentTimeMillis();
+            
+            return client.post()
+                    .uri(baseUrl + path)
+                    .headers(h -> headers.forEach(h::add))
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(type)
+                    .doOnSuccess(response -> {
+                        long responseTime = System.currentTimeMillis() - startTime;
+                        healthTracker.recordSuccess(proxyIndex, responseTime);
+                    })
+                    .doOnError(error -> {
+                        healthTracker.recordFailure(proxyIndex);
+                        log.error("POST request failed for {}{}: {}", baseUrl, path, error.getMessage());
+                    })
+                    .onErrorMap(error -> {
+                        if (!(error instanceof SolanaRpcException)) {
+                            return new SolanaRpcException("POST request failed", error);
+                        }
+                        return error;
+                    });
+        })
+        .retryWhen(retry);
     }
 
     public <T> Mono<T> postJsonOnce(WebClient client, String baseUrl, String path, Object body, Class<T> type, Map<String, String> headers) {
