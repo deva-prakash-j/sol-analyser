@@ -5,11 +5,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 
 @Component
+@Profile("prod")
 @Slf4j
 @RequiredArgsConstructor
 public class WalletQueueConsumer {

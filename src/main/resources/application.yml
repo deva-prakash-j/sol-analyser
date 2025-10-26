@@ -87,6 +87,13 @@ app:
   cache:
     default-ttl-seconds: 86400
 
+# Oculus Proxy Configuration (Dynamic Sessions)
+oculus:
+  auth-token: ${OCULUS_AUTH_TOKEN:f6a3e6c8-f39e-48f7-98f1-93664f6ccf0c}
+  order-token: ${OCULUS_ORDER_TOKEN:oc_b825a01f}
+  country: ${OCULUS_COUNTRY:de}
+  plan-type: ${OCULUS_PLAN_TYPE:SHARED_DC}
+
 proxy-pool:
   host: "p.webshare.io"
   port: 80

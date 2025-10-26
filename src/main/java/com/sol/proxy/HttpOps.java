@@ -115,12 +115,14 @@ public class HttpOps {
             int proxyIndex = pool.getLastProxyIndex(baseUrl);
             long startTime = System.currentTimeMillis();
             
-            return client.post()
-                    .uri(baseUrl + path)
-                    .headers(h -> headers.forEach(h::add))
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(type)
+            // Add delay BEFORE making the request
+            return Mono.delay(Duration.ofMillis(200))
+                    .then(client.post()
+                            .uri(baseUrl + path)
+                            .headers(h -> headers.forEach(h::add))
+                            .bodyValue(body)
+                            .retrieve()
+                            .bodyToMono(type))
                     .doOnSuccess(response -> {
                         long responseTime = System.currentTimeMillis() - startTime;
                         healthTracker.recordSuccess(proxyIndex, responseTime);

@@ -3,6 +3,7 @@ package com.sol.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -11,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 @Service
+@Profile("!prod")
 @RequiredArgsConstructor
 @Slf4j
 public class StartupService {
@@ -21,8 +23,8 @@ public class StartupService {
      * Async processing ensures application starts successfully even if wallet processing fails.
      * Changed from @PostConstruct to @EventListener to decouple from bean initialization.
      */
-    //@EventListener(ApplicationReadyEvent.class)
-    //@Async
+    @EventListener(ApplicationReadyEvent.class)
+    @Async
     public void startup() {
         log.info("=== Application Ready - Starting Async Wallet Processing ===");
         
@@ -41,9 +43,9 @@ public class StartupService {
     
     private void processAllWallets() {
         List<String> wallets = List.of(
-                "2e7jTCKTakatd1f3zabgm9aDujRgoyxbnG2VtZ9yjy3c"
-                //"DULT2ijn8FaUagyqTCbuidDiADUxXK9aJV1Ghi6EfhE5"
-               // "63XhSCjVUxb6R8xLWJ3EAGS8aKRbwNGnSEtCByQ4Asd2"
+                "FiAPe3q5TFYfYu4fP2ySMLRE9qfkAEYLsk2JaPaavvuW"
+                //"A7V5qDASoWNkB1uCXgtUs9MCxWPbwZEVRJciPZsPjKdR"
+               //"63XhSCjVUxb6R8xLWJ3EAGS8aKRbwNGnSEtCByQ4Asd2"
         );
         
         int successCount = 0;
