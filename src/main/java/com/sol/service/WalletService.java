@@ -89,6 +89,11 @@ public class WalletService {
                 return;
             }
             
+            if(signatures.size() > 10000) {
+                log.warn("[Stage 3/5] More than 10000 transaction signatures found for wallet: {} - Consider reducing the time range", wallet);
+                return;
+            }
+
             // Stage 4: Fetch transactions
             currentStage = "fetch_transactions";
             log.info("[Stage 4/5] Fetching full transaction details");

@@ -4,6 +4,9 @@ import org.springframework.stereotype.Component;
 
 import com.sol.bean.ProxyIdentity;
 import com.sol.bean.ProxyPoolProperties;
+
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -11,6 +14,7 @@ import java.util.stream.IntStream;
 import org.springframework.web.reactive.function.client.WebClient;
 
 @Component
+@Slf4j
 public class ProxyPool {
 
     private final List<WebClient> clients;
@@ -19,6 +23,7 @@ public class ProxyPool {
 
     public ProxyPool(ProxyPoolProperties props) {
         List<WebClient> tmp = new ArrayList<>();
+        log.info("Creating {} proxy clients", props.getCount());
         for (int i = 0; i < props.getCount(); i++) {
             String user = props.getUsernamePrefix() + (props.getStartIndex() + i);
             ProxyIdentity id = new ProxyIdentity(user, props.getPassword(), props.getHost(), props.getPort());
