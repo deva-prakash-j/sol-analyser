@@ -95,7 +95,7 @@ proxy-pool:
   count: 250
   password: ${PROXY_PASSWORD}
   # Increased to 3 connections per proxy (conservative for RPC stability)
-  perProxyMaxConnections: 3
+  perProxyMaxConnections: 1
   # Keep generous timeouts for Solana RPC variability (10-30s response times are normal)
   connectTimeoutMs: 10000
   responseTimeoutMs: 30000
