@@ -2,7 +2,7 @@ spring:
   application:
     name: sol
   rabbitmq:
-    host: rabbitmq
+    host: ${RMQ_HOST}
     port: 5672
     username: dpraka15
     password: ${RMQ_PWD}

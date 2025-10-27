@@ -12,6 +12,7 @@ services:
       # Spring Profile
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILE:-prod}
       RMQ_PWD: ${RMQ_PWD}
+      RMQ_HOST: ${RMQ_HOST:-rabbitmq}
       OCULUS_AUTH_TOKEN: ${OCULUS_AUTH_TOKEN}
       
       # Database Configuration
@@ -20,7 +21,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
       
       # Redis Configuration
-      SPRING_DATA_REDIS_HOST: sol-redis
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-sol-redis}
       
       # Proxy Configuration (WebShare)
       PROXY_USERNAME: ${PROXY_USERNAME}
@@ -28,7 +29,7 @@ services:
       
       
       # Application Settings
-      SERVER_PORT: 8080
+      SERVER_PORT: 8081
       LOGGING_LEVEL_COM_SOL: ${LOG_LEVEL:-INFO}
       
       # JVM Options

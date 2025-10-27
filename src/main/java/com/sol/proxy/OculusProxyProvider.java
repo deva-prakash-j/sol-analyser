@@ -62,6 +62,7 @@ public class OculusProxyProvider {
                     .uri("https://api.ipify.org")
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(60)) 
                     .block();
             
             log.info("Detected public IP: {}", ip);
