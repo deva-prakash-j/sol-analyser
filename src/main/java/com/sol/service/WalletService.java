@@ -87,6 +87,9 @@ public class WalletService {
             if (signatures.isEmpty()) {
                 log.warn("[Stage 3/5] No transaction signatures found for wallet: {} - Stopping", wallet);
                 return;
+            } else if(signatures.size() > 60000) {
+                log.warn("[Stage 3/5] Too many signatures ({}), limiting to 60,000 for wallet: {}", signatures.size(), wallet);
+                return;
             }
 
             // Stage 4: Fetch transactions
