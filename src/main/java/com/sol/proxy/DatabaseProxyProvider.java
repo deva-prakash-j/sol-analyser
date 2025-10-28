@@ -8,6 +8,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Random;
 
 /**
  * Database-based proxy provider that fetches proxy sessions from stored database records
@@ -20,9 +21,11 @@ public class DatabaseProxyProvider {
 
     private final ProxyRepository proxyRepository;
     private Long lastFetchedId = 0L;
+    private final Random random = new Random();
 
     /**
      * Fetch proxy sessions from database for small batches
+     * For single proxy requests (rotation), uses random selection to avoid repeats
      * @param count Number of sessions to fetch (should be <= 1000)
      * @return List of proxy session strings
      */
@@ -44,8 +47,19 @@ public class DatabaseProxyProvider {
             
             log.debug("Total proxies available in database: {}", totalProxies);
             
-            Pageable pageable = PageRequest.of(0, count);
-            List<String> sessions = proxyRepository.findSessionsWithLimit(pageable);
+            List<String> sessions;
+            
+            if (count == 1) {
+                // For single proxy requests (rotation), use random selection to avoid repeats
+                long randomOffset = random.nextLong(totalProxies);
+                Pageable pageable = PageRequest.of((int) randomOffset, 1);
+                sessions = proxyRepository.findSessionsWithLimit(pageable);
+                log.debug("Selected random proxy at offset {} for rotation", randomOffset);
+            } else {
+                // For batch requests, use normal pagination
+                Pageable pageable = PageRequest.of(0, count);
+                sessions = proxyRepository.findSessionsWithLimit(pageable);
+            }
             
             log.info("Successfully fetched {} proxy sessions from database", sessions.size());
             return sessions;

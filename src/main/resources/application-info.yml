@@ -1,0 +1,23 @@
+# Application Information
+info:
+  app:
+    name: "Solana Wallet Analyzer"
+    description: "Advanced Solana wallet analysis with proxy rotation and memory optimization"
+    version: "1.0.0"
+    encoding: "UTF-8"
+    java:
+      version: "21"
+  features:
+    - "Proxy rotation with 10,000+ proxies"
+    - "Memory leak prevention with individual connection providers"
+    - "Comprehensive monitoring endpoints"
+    - "Graceful shutdown support"
+    - "Database connection pooling"
+  monitoring:
+    endpoints:
+      - "/api/admin/proxy/memory - Memory usage statistics"
+      - "/api/admin/proxy/connections - Database pool status"
+      - "/api/admin/proxy/webclient-pool - WebClient pool monitoring"
+      - "/api/admin/proxy/gc - Force garbage collection"
+      - "/actuator/health - Application health"
+      - "/actuator/metrics - Application metrics"

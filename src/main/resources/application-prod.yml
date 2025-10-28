@@ -1,0 +1,68 @@
+# Production configuration
+spring:
+  profiles:
+    active: prod
+  
+  # JPA Configuration for production
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Don't auto-create tables in prod
+    show-sql: false       # Disable SQL logging in prod
+    properties:
+      hibernate:
+        '[format_sql]': false
+        '[use_sql_comments]': false
+  
+  # Database connection pool tuning for production
+  datasource:
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+
+  # Graceful shutdown timeout
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+# Server configuration
+server:
+  port: 8090
+  shutdown: graceful
+
+# Logging configuration for production
+logging:
+  level:
+    root: WARN
+    '[com.sol]': INFO
+    '[org.springframework.web]': WARN
+    '[org.springframework.security]': WARN
+    '[org.hibernate]': WARN
+    '[com.zaxxer.hikari]': WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%15.15t] %-5level %-40.40logger{39} : %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%15.15t] %-5level %-40.40logger{39} : %msg%n"
+  file:
+    name: logs/sol-application.log
+  logback:
+    rollingpolicy:
+      max-file-size: 100MB
+      max-history: 30
+
+# Actuator endpoints (internal monitoring)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  server:
+    port: 8091
+  prometheus:
+    metrics:
+      export:
+        enabled: true

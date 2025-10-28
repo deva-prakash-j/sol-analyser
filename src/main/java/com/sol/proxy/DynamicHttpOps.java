@@ -128,6 +128,7 @@ public class DynamicHttpOps {
                                             String queryParams, Class<T> responseType, Map<String, String> headers) {
         
         AtomicReference<WebClient> currentClient = new AtomicReference<>(client);
+        AtomicReference<WebClientPool.ManagedWebClient> rotatedClient = new AtomicReference<>(null);
         
         Retry retry = Retry
                 .backoff(MAX_RETRIES, Duration.ofSeconds(1))
@@ -146,14 +147,25 @@ public class DynamicHttpOps {
                         if (wcre.getStatusCode().value() == 429) {
                             log.info("429 rate limit detected on GET request, rotating to new proxy session");
                             try {
+                                // Dispose previous rotated client if exists
+                                WebClientPool.ManagedWebClient previousRotated = rotatedClient.get();
+                                if (previousRotated != null) {
+                                    previousRotated.dispose();
+                                    log.debug("Disposed previous rotated GET client: {}", previousRotated.getClientId());
+                                }
+                                
                                 // Fetch a single new session for rotation
                                 List<String> newSessions = proxyProvider.fetchProxySessions(1);
                                 if (!newSessions.isEmpty()) {
                                     List<WebClientPool.ManagedWebClient> newManagedClients = clientFactory.createManagedClients(newSessions, proxyProvider);
                                     if (!newManagedClients.isEmpty()) {
-                                        currentClient.set(newManagedClients.get(0).getWebClient());
-                                        log.debug("Successfully rotated to new proxy session for GET retry");
-                                        // Note: The old client will be disposed when the batch completes
+                                        WebClientPool.ManagedWebClient newManagedClient = newManagedClients.get(0);
+                                        WebClient newClient = newManagedClient.getWebClient();
+                                        currentClient.set(newClient);
+                                        rotatedClient.set(newManagedClient); // Track for disposal
+                                        log.info("Successfully rotated to new proxy session for GET: {} (client: {})", 
+                                                newSessions.get(0).substring(0, Math.min(50, newSessions.get(0).length())),
+                                                newManagedClient.getClientId());
                                     }
                                 }
                             } catch (Exception e) {
@@ -163,28 +175,39 @@ public class DynamicHttpOps {
                     }
                 });
 
-        return Mono.defer(() -> 
-                Mono.delay(Duration.ofMillis(50))
-                        .then(currentClient.get().get()
-                                .uri(baseUrl + path + queryParams)
-                                .headers(h -> headers.forEach(h::add))
-                                .retrieve()
-                                .bodyToMono(responseType))
-                        .doOnError(error -> log.debug("GET request failed for {}{}{}: {}", 
-                                baseUrl, path, queryParams, error.getMessage()))
-                        .onErrorResume(error -> {
-                            if (error instanceof WebClientResponseException) {
-                                WebClientResponseException wcre = (WebClientResponseException) error;
-                                if (wcre.getStatusCode().value() == 404) {
-                                    // Return empty for 404 errors
-                                    log.debug("Returning empty response for 404 error: {}", error.getMessage());
-                                    return Mono.empty();
-                                }
+        return Mono.defer(() -> {
+            // Get the current client each time defer is executed (important for rotation)
+            WebClient clientToUse = currentClient.get();
+            
+            return Mono.delay(Duration.ofMillis(50))
+                    .then(clientToUse.get()
+                            .uri(baseUrl + path + queryParams)
+                            .headers(h -> headers.forEach(h::add))
+                            .retrieve()
+                            .bodyToMono(responseType))
+                    .doOnError(error -> log.debug("GET request failed for {}{}{}: {}", 
+                            baseUrl, path, queryParams, error.getMessage()))
+                    .onErrorResume(error -> {
+                        if (error instanceof WebClientResponseException) {
+                            WebClientResponseException wcre = (WebClientResponseException) error;
+                            if (wcre.getStatusCode().value() == 404) {
+                                // Return empty for 404 errors
+                                log.debug("Returning empty response for 404 error: {}", error.getMessage());
+                                return Mono.empty();
                             }
-                            return Mono.error(error); // Propagate error for retry
-                        })
-        )
+                        }
+                        return Mono.error(error); // Propagate error for retry
+                    });
+        })
         .retryWhen(retry)
+        .doFinally(signalType -> {
+            // Clean up any rotated client when the request completes (success or failure)
+            WebClientPool.ManagedWebClient finalRotated = rotatedClient.get();
+            if (finalRotated != null) {
+                finalRotated.dispose();
+                log.debug("Disposed rotated GET client on request completion: {}", finalRotated.getClientId());
+            }
+        })
         .onErrorResume(error -> {
             // After all retries exhausted, log and return empty instead of throwing
             log.warn("GET request failed after {} retries, returning empty result: {}", 
@@ -200,6 +223,7 @@ public class DynamicHttpOps {
                                              Object body, Class<T> responseType, Map<String, String> headers) {
         
         AtomicReference<WebClient> currentClient = new AtomicReference<>(client);
+        AtomicReference<WebClientPool.ManagedWebClient> rotatedClient = new AtomicReference<>(null);
         
         Retry retry = Retry
                 .backoff(MAX_RETRIES, Duration.ofSeconds(1))
@@ -218,14 +242,25 @@ public class DynamicHttpOps {
                         if (wcre.getStatusCode().value() == 429) {
                             log.info("429 rate limit detected, rotating to new proxy session");
                             try {
+                                // Dispose previous rotated client if exists
+                                WebClientPool.ManagedWebClient previousRotated = rotatedClient.get();
+                                if (previousRotated != null) {
+                                    previousRotated.dispose();
+                                    log.debug("Disposed previous rotated client: {}", previousRotated.getClientId());
+                                }
+                                
                                 // Fetch a single new session for rotation
                                 List<String> newSessions = proxyProvider.fetchProxySessions(1);
                                 if (!newSessions.isEmpty()) {
                                     List<WebClientPool.ManagedWebClient> newManagedClients = clientFactory.createManagedClients(newSessions, proxyProvider);
                                     if (!newManagedClients.isEmpty()) {
-                                        currentClient.set(newManagedClients.get(0).getWebClient());
-                                        log.debug("Successfully rotated to new proxy session for retry");
-                                        // Note: The old client will be disposed when the batch completes
+                                        WebClientPool.ManagedWebClient newManagedClient = newManagedClients.get(0);
+                                        WebClient newClient = newManagedClient.getWebClient();
+                                        currentClient.set(newClient);
+                                        rotatedClient.set(newManagedClient); // Track for disposal
+                                        log.info("Successfully rotated to new proxy session: {} (client: {})", 
+                                                newSessions.get(0).substring(0, Math.min(50, newSessions.get(0).length())),
+                                                newManagedClient.getClientId());
                                     }
                                 }
                             } catch (Exception e) {
@@ -235,30 +270,41 @@ public class DynamicHttpOps {
                     }
                 });
 
-        return Mono.defer(() -> 
-                Mono.delay(Duration.ofMillis(50))
-                        .then(currentClient.get().post()
-                                .uri(baseUrl + path)
-                                .headers(h -> headers.forEach(h::add))
-                                .bodyValue(body)
-                                .retrieve()
-                                .bodyToMono(responseType))
-                        .doOnError(error -> log.debug("POST request failed for {}{}: {}", 
-                                baseUrl, path, error.getMessage()))
-                        .onErrorResume(error -> {
-                            if (error instanceof WebClientResponseException) {
-                                WebClientResponseException wcre = (WebClientResponseException) error;
-                                if (wcre.getStatusCode().value() == 404 || 
-                                    wcre.getStatusCode().value() == 500) {
-                                    // Return empty for certain errors (transaction not found, etc.)
-                                    log.debug("Returning empty response for error: {}", error.getMessage());
-                                    return Mono.empty();
-                                }
+        return Mono.defer(() -> {
+            // Get the current client each time defer is executed (important for rotation)
+            WebClient clientToUse = currentClient.get();
+            
+            return Mono.delay(Duration.ofMillis(50))
+                    .then(clientToUse.post()
+                            .uri(baseUrl + path)
+                            .headers(h -> headers.forEach(h::add))
+                            .bodyValue(body)
+                            .retrieve()
+                            .bodyToMono(responseType))
+                    .doOnError(error -> log.debug("POST request failed for {}{}: {}", 
+                            baseUrl, path, error.getMessage()))
+                    .onErrorResume(error -> {
+                        if (error instanceof WebClientResponseException) {
+                            WebClientResponseException wcre = (WebClientResponseException) error;
+                            if (wcre.getStatusCode().value() == 404 || 
+                                wcre.getStatusCode().value() == 500) {
+                                // Return empty for certain errors (transaction not found, etc.)
+                                log.debug("Returning empty response for error: {}", error.getMessage());
+                                return Mono.empty();
                             }
-                            return Mono.error(error); // Propagate error for retry
-                        })
-        )
+                        }
+                        return Mono.error(error); // Propagate error for retry
+                    });
+        })
         .retryWhen(retry)
+        .doFinally(signalType -> {
+            // Clean up any rotated client when the request completes (success or failure)
+            WebClientPool.ManagedWebClient finalRotated = rotatedClient.get();
+            if (finalRotated != null) {
+                finalRotated.dispose();
+                log.debug("Disposed rotated client on request completion: {}", finalRotated.getClientId());
+            }
+        })
         .onErrorResume(error -> {
             // After all retries exhausted, log and return empty instead of throwing
             log.warn("Request failed after {} retries, returning empty result: {}", 

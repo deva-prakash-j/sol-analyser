@@ -40,20 +40,10 @@ public class WebClientPool {
     private final ConcurrentHashMap<String, WebClientWrapper> activeClients = new ConcurrentHashMap<>();
     private final AtomicLong clientIdGenerator = new AtomicLong(0);
     
-    // Shared connection provider for efficiency
-    private final ConnectionProvider connectionProvider;
+    // Remove shared connection provider - create individual ones for proper cleanup
     
     public WebClientPool() {
-        this.connectionProvider = ConnectionProvider.builder("proxy-pool")
-                .maxConnections(MAX_CONNECTIONS)
-                .pendingAcquireTimeout(Duration.ofSeconds(PENDING_ACQUIRE_TIMEOUT))
-                .maxIdleTime(Duration.ofSeconds(MAX_IDLE_TIME))
-                .maxLifeTime(Duration.ofSeconds(MAX_LIFE_TIME))
-                .evictInBackground(Duration.ofSeconds(30)) // Clean up connections every 30s
-                .build();
-        
-        log.info("Initialized WebClientPool with connection pooling (max: {}, idle: {}s, lifetime: {}s)", 
-                MAX_CONNECTIONS, MAX_IDLE_TIME, MAX_LIFE_TIME);
+        log.info("Initialized WebClientPool with individual connection providers for proper cleanup");
     }
 
     /**
@@ -62,7 +52,16 @@ public class WebClientPool {
     public ManagedWebClient createManagedClient(ProxyCredentials credentials) {
         String clientId = "client-" + clientIdGenerator.incrementAndGet();
         
-        HttpClient httpClient = HttpClient.create(connectionProvider)
+        // Create individual ConnectionProvider for this proxy to ensure proper cleanup
+        ConnectionProvider individualProvider = ConnectionProvider.builder("proxy-" + clientId)
+                .maxConnections(50) // Smaller pool per proxy
+                .pendingAcquireTimeout(Duration.ofSeconds(PENDING_ACQUIRE_TIMEOUT))
+                .maxIdleTime(Duration.ofSeconds(MAX_IDLE_TIME))
+                .maxLifeTime(Duration.ofSeconds(MAX_LIFE_TIME))
+                .evictInBackground(Duration.ofSeconds(10)) // More frequent cleanup
+                .build();
+        
+        HttpClient httpClient = HttpClient.create(individualProvider)
                 .proxy(proxy -> proxy
                         .type(ProxyProvider.Proxy.HTTP)
                         .host(credentials.getHost())
@@ -86,11 +85,11 @@ public class WebClientPool {
                 .exchangeStrategies(strategies)
                 .build();
         
-        // Wrap with management capabilities
-        WebClientWrapper wrapper = new WebClientWrapper(clientId, webClient, httpClient);
+        // Wrap with management capabilities - store the connection provider for disposal
+        WebClientWrapper wrapper = new WebClientWrapper(clientId, webClient, httpClient, individualProvider);
         activeClients.put(clientId, wrapper);
         
-        log.debug("Created managed WebClient {} for proxy {}:{} (total active: {})", 
+        log.debug("Created managed WebClient {} for proxy {}:{} with individual connection provider (total active: {})", 
                 clientId, credentials.getHost(), credentials.getPort(), activeClients.size());
         
         return new ManagedWebClient(clientId, webClient, this);
@@ -136,7 +135,7 @@ public class WebClientPool {
         return new PoolStats(
                 activeClients.size(),
                 MAX_CONNECTIONS,
-                connectionProvider.toString()
+                "Individual connection providers per client"
         );
     }
 
@@ -147,7 +146,7 @@ public class WebClientPool {
     public void shutdown() {
         log.info("Shutting down WebClientPool ({} active clients)", activeClients.size());
         
-        // Dispose all active clients
+        // Dispose all active clients and their individual connection providers
         activeClients.values().forEach(wrapper -> {
             try {
                 wrapper.dispose();
@@ -157,30 +156,36 @@ public class WebClientPool {
         });
         activeClients.clear();
         
-        // Close connection provider
-        try {
-            connectionProvider.dispose();
-            log.info("WebClientPool shutdown complete");
-        } catch (Exception e) {
-            log.error("Error during connection provider shutdown: {}", e.getMessage());
-        }
+        log.info("WebClientPool shutdown complete");
     }
 
     /**
      * Wrapper for WebClient with disposal tracking
      */
     private static class WebClientWrapper {
+        private final String id;
+        private final ConnectionProvider connectionProvider;
         private volatile boolean disposed = false;
 
-        public WebClientWrapper(String id, WebClient webClient, HttpClient httpClient) {
-            // Fields not stored as they're only needed for logging
+        public WebClientWrapper(String id, WebClient webClient, HttpClient httpClient, ConnectionProvider connectionProvider) {
+            this.id = id;
+            this.connectionProvider = connectionProvider;
         }
 
         public void dispose() {
             if (!disposed) {
                 disposed = true;
-                // HttpClient disposal is handled by the connection provider
-                // Just mark as disposed to prevent further use
+                try {
+                    log.debug("Disposing WebClient wrapper {} with individual connection provider", id);
+                    
+                    // Dispose individual connection provider to clean up connection pools
+                    if (connectionProvider != null) {
+                        connectionProvider.dispose();
+                        log.debug("Disposed individual connection provider for WebClient {}", id);
+                    }
+                } catch (Exception e) {
+                    log.warn("Error during resource cleanup for WebClient {}: {}", id, e.getMessage());
+                }
             }
         }
     }
