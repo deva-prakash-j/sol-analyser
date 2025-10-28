@@ -21,12 +21,13 @@ services:
     
     ports:
       - "8081:8081"
+      - "8091:8091"  # Actuator port mapping
     
     volumes:
       - app_logs:/app/logs
     
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8091/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
