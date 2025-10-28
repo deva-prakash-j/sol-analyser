@@ -45,7 +45,7 @@ public class WalletValidationService {
     private static final int BOT_SCORE_THRESHOLD = 60; // 0-100 scale
     
     // Wash trading thresholds
-    private static final int MAX_ROUND_TRIP_SECONDS = 300; // 5 minutes
+    private static final int MAX_ROUND_TRIP_SECONDS = 120; // 2 minutes
     private static final int MAX_ROUND_TRIPS = 5;
     private static final int MAX_SAME_BLOCK_ROUND_TRIPS = 3;
     private static final double MAX_IDENTICAL_SIZE_PERCENTAGE = 0.5;
@@ -361,7 +361,7 @@ public class WalletValidationService {
         
         if (totalRoundTrips > MAX_ROUND_TRIPS) {
             reasons.add(String.format(
-                "Wash trading: %d quick round-trip trades (buy then sell <5min)",
+                "Wash trading: %d quick round-trip trades (buy then sell <2min)",
                 totalRoundTrips
             ));
         }
