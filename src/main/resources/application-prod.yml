@@ -1,8 +1,5 @@
 # Production configuration
 spring:
-  profiles:
-    active: prod
-  
   # JPA Configuration for production
   jpa:
     hibernate:
