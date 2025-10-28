@@ -93,6 +93,7 @@ public class WalletService {
             currentStage = "fetch_transactions";
             log.info("[Stage 4/5] Fetching full transaction details");
             List<Transaction> transactions = fetchTransactions(signatures, wallet);
+            log.info("Signatures: {}, transactions:{}", signatures.stream().filter(Objects::nonNull).count(), transactions.stream().filter(Objects::nonNull).count());
             if (transactions.isEmpty()) {
                 log.warn("[Stage 4/5] No transactions fetched for wallet: {} - Stopping", wallet);
                 return;

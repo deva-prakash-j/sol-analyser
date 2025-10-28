@@ -32,7 +32,7 @@ public class WalletQueueConsumer {
             log.info("Successfully processed wallet: {}", wallet);
             
             // Add delay between wallets to prevent rate limiting
-            Thread.sleep(1000);
+            Thread.sleep(300000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("Consumer interrupted: {}", e.getMessage());
