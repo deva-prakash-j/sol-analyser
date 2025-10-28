@@ -2,10 +2,7 @@ version: '3.8'
 
 services:
   sol-scanner:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      network: host
+    image: sol-wallet-analyzer:latest
     container_name: sol-app
     restart: unless-stopped
     environment:
@@ -21,16 +18,9 @@ services:
       
       # Redis Configuration
       SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-sol-redis}
-      
-      # Application Settings
-      SERVER_PORT: 8081
-      LOGGING_LEVEL_COM_SOL: ${LOG_LEVEL:-INFO}
-      
-      # JVM Options
-      JAVA_OPTS: "-Xmx2g -Xms512m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
     
     ports:
-      - "8081:8080"
+      - "8081:8081"
     
     volumes:
       - app_logs:/app/logs
