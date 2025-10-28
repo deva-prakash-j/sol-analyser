@@ -1,7 +1,6 @@
 package com.sol.proxy;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
@@ -12,8 +11,9 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Tracks health metrics for each proxy to enable intelligent routing
  * Helps avoid dead/slow proxies and implements circuit breaker pattern
+ * DISABLED: No longer used with database-based proxy management
  */
-@Component
+// @Component - Removed: No longer needed with DatabaseProxyProvider
 @Slf4j
 public class ProxyHealthTracker {
     

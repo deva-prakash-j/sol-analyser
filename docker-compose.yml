@@ -13,7 +13,6 @@ services:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILE:-prod}
       RMQ_PWD: ${RMQ_PWD}
       RMQ_HOST: ${RMQ_HOST:-rabbitmq}
-      OCULUS_AUTH_TOKEN: ${OCULUS_AUTH_TOKEN}
       
       # Database Configuration
       SPRING_DATASOURCE_URL: ${DB_URI}
@@ -22,11 +21,6 @@ services:
       
       # Redis Configuration
       SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-sol-redis}
-      
-      # Proxy Configuration (WebShare)
-      PROXY_USERNAME: ${PROXY_USERNAME}
-      PROXY_PASSWORD: ${PROXY_PASSWORD}
-      
       
       # Application Settings
       SERVER_PORT: 8081

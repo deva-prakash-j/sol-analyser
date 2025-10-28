@@ -62,12 +62,12 @@ public class SolanaService {
             return List.of();
         }
         
-        log.info("Fetching signatures for {} accounts (wallet: {})", accounts.size(), wallet);
+        log.info("Fetching signatures for {} accounts (wallet: {}) with distributed proxy rotation", accounts.size(), wallet);
         
         try {
             List<TransactionSignaturesResponse> allResponses = new java.util.ArrayList<>();
             
-            // Process each account with pagination
+            // Process each account with pagination using different proxy clients per page
             for (String account : accounts) {
                 List<TransactionSignaturesResponse.Result> accountSignatures = new java.util.ArrayList<>();
                 String beforeSignature = null;
@@ -93,21 +93,23 @@ public class SolanaService {
                             .params(List.of(account, params))
                             .build();
                     
-                    // Fetch single page
+                    // Use different proxy client for each page request
+                    // This distributes the load and reduces risk of rate limiting on any single proxy
                     List<TransactionSignaturesResponse> pageResponses = dynamicHttpOps.postJsonBatch(
                             SOLANA_RPC_URL, "", 
                             List.of(request), 
                             TransactionSignaturesResponse.class, 
-                            Map.of());
+                            Map.of(),
+                            false); // Request fresh proxy for each page
                     
                     if (pageResponses == null || pageResponses.isEmpty() || pageResponses.get(0) == null || pageResponses.get(0).getResult() == null || pageResponses.get(0).getResult().size() == 0) {
-                        log.warn("Received null/empty response for account {} (wallet: {})", account, wallet);
+                        log.warn("Received null/empty response for account {} page {} (wallet: {})", account, pageCount, wallet);
                         break;
                     }
                     
                     TransactionSignaturesResponse pageResponse = pageResponses.get(0);
                     List<TransactionSignaturesResponse.Result> pageResults = pageResponse.getResult();
-                    //log.info("Fetched {} signatures for before {}", pageResults.size(), beforeSignature);
+                    log.debug("Page {} for account {}: fetched {} signatures using fresh proxy", pageCount, account, pageResults.size());
                     
                     if (pageResults == null || pageResults.isEmpty()) {
                         log.debug("No more signatures for account {} (wallet: {})", account, wallet);
@@ -136,7 +138,7 @@ public class SolanaService {
                         
                         previousBeforeSignature = beforeSignature;
                         beforeSignature = lastSignature;
-                        //log.info("fetching next page with before={}", beforeSignature);
+                        //log.info("fetching next page with before={} using next proxy client", beforeSignature);
                     } else {
                         hasMore = false;
                     }
@@ -151,11 +153,11 @@ public class SolanaService {
                 accountResponse.setResult(accountSignatures);
                 allResponses.add(accountResponse);
                 
-                log.info("Fetched total {} signatures across {} pages for account {} (wallet: {})", 
+                log.info("Fetched total {} signatures across {} pages for account {} (wallet: {}) with distributed proxy usage", 
                         accountSignatures.size(), pageCount, account, wallet);
             }
             
-            log.info("Successfully fetched signatures for {} accounts (wallet: {})", allResponses.size(), wallet);
+            log.info("Successfully fetched signatures for {} accounts (wallet: {}) using distributed proxy rotation", allResponses.size(), wallet);
             return allResponses;
         } catch (Exception e) {
             log.error("Failed to fetch signatures bulk for wallet {}: {}", wallet, e.getMessage(), e);

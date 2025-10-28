@@ -1,11 +1,9 @@
 package com.sol.bean;
 
 import lombok.Data;
-import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.context.annotation.Configuration;
 
-@Configuration
-@ConfigurationProperties(prefix = "proxy-pool")
+// @Configuration - Removed: No longer used with DatabaseProxyProvider
+// @ConfigurationProperties(prefix = "proxy-pool")
 @Data
 public class ProxyPoolProperties {
     private String host;

@@ -1,7 +1,5 @@
 package com.sol.proxy;
 
-import org.springframework.stereotype.Component;
-
 import com.sol.bean.ProxyIdentity;
 import com.sol.bean.ProxyPoolProperties;
 
@@ -13,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.springframework.web.reactive.function.client.WebClient;
 
-@Component
+// @Component - Removed: No longer used, replaced by DatabaseProxyProvider
 @Slf4j
 public class ProxyPool {
 

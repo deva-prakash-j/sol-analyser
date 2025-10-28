@@ -2,7 +2,7 @@ package com.sol.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sol.proxy.HttpOps;
+import com.sol.proxy.DynamicHttpOps;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,13 +16,14 @@ import java.util.stream.Collectors;
 /**
  * Service for fetching current token prices from Jupiter API
  * Used to calculate unrealized PnL for open positions
+ * Now uses database-stored proxy sessions for better rate limit handling
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class JupiterService {
     
-    private final HttpOps httpOps;
+    private final DynamicHttpOps dynamicHttpOps;
     private final ObjectMapper objectMapper;
     
     private static final String JUPITER_PRICE_API = "https://lite-api.jup.ag/price/v3";
@@ -87,15 +88,26 @@ public class JupiterService {
         
         // Build query string: ids=mint1,mint2,mint3
         String idsParam = String.join(",", mints);
-        String url = JUPITER_PRICE_API + "?ids=" + idsParam;
+        String queryParams = "?ids=" + idsParam;
         
-        return httpOps.getOnce(url, "", Map.of())
-                .map(responseJson -> {
+        return Mono.fromCallable(() -> {
                     try {
-                        return parsePriceResponse(responseJson, mints);
+                        // Use DynamicHttpOps with proxy support for GET requests
+                        List<String> responses = dynamicHttpOps.getBatch(
+                                JUPITER_PRICE_API, "", 
+                                List.of(queryParams), 
+                                String.class, 
+                                Map.of());
+                        
+                        if (responses != null && !responses.isEmpty() && responses.get(0) != null) {
+                            return parsePriceResponse(responses.get(0), mints);
+                        } else {
+                            log.warn("Received null/empty response from Jupiter API for mints: {}", mints);
+                            return Collections.<TokenPrice>emptyList();
+                        }
                     } catch (Exception e) {
-                        log.error("Failed to parse Jupiter price response: {}", e.getMessage());
-                        return Collections.<TokenPrice>emptyList();
+                        log.error("Failed to fetch prices from Jupiter API: {}", e.getMessage());
+                        throw e;
                     }
                 })
                 .onErrorResume(error -> {

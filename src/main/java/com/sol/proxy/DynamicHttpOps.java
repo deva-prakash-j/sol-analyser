@@ -16,13 +16,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class DynamicHttpOps {
 
-    private final OculusProxyProvider proxyProvider;
+    private final DatabaseProxyProvider proxyProvider;
     private final DynamicProxyClientFactory clientFactory;
     private static final int MAX_RETRIES = 3;
 
@@ -41,23 +42,32 @@ public class DynamicHttpOps {
         
         // Fetch fresh proxy sessions
         List<String> proxySessions = proxyProvider.fetchProxySessions(proxyCount);
-        List<WebClient> clients = clientFactory.createClients(proxySessions, proxyProvider);
+        List<WebClientPool.ManagedWebClient> managedClients = clientFactory.createManagedClients(proxySessions, proxyProvider);
         
-        log.info("Processing batch of {} requests with {} fresh proxy sessions (full pool: {})", 
-                bodies.size(), clients.size(), requestFullProxyPool);
+        log.info("Processing batch of {} requests with {} fresh managed proxy sessions (full pool: {})", 
+                bodies.size(), managedClients.size(), requestFullProxyPool);
         
-        AtomicInteger clientIndex = new AtomicInteger(0);
-        
-        return reactor.core.publisher.Flux.fromIterable(bodies)
-                .flatMap(body -> {
-                    // Round-robin through available clients
-                    int idx = clientIndex.getAndIncrement() % clients.size();
-                    WebClient client = clients.get(idx);
+        try {
+            AtomicInteger clientIndex = new AtomicInteger(0);
+            
+            List<T> results = reactor.core.publisher.Flux.fromIterable(bodies)
+                    .flatMap(body -> {
+                        // Round-robin through available clients
+                        int idx = clientIndex.getAndIncrement() % managedClients.size();
+                        WebClient client = managedClients.get(idx).getWebClient();
+                        
+                        return executePostWithRetry(client, baseUrl, path, body, responseType, headers);
+                    }, batchSize) // Concurrency = batch size
+                    .collectList()
+                    .block();
                     
-                    return executePostWithRetry(client, baseUrl, path, body, responseType, headers);
-                }, batchSize) // Concurrency = batch size
-                .collectList()
-                .block();
+            return results != null ? results : List.of();
+            
+        } finally {
+            // Always dispose managed clients to prevent memory leaks
+            clientFactory.getWebClientPool().disposeClients(managedClients);
+            log.debug("Disposed {} managed clients after batch processing", managedClients.size());
+        }
     }
     
     /**
@@ -69,10 +79,55 @@ public class DynamicHttpOps {
     }
 
     /**
-     * Execute single POST request with retry and fresh proxy on each retry
+     * Execute GET requests with dynamic proxy sessions
+     * Designed for simple API calls like Jupiter price fetching
      */
-    private <T> Mono<T> executePostWithRetry(WebClient client, String baseUrl, String path, 
-                                             Object body, Class<T> responseType, Map<String, String> headers) {
+    public <T> List<T> getBatch(String baseUrl, String path, List<String> queryParams, 
+                                Class<T> responseType, Map<String, String> headers) {
+        
+        if (queryParams.isEmpty()) {
+            return List.of();
+        }
+        
+        int batchSize = Math.min(queryParams.size(), 100); // Smaller batch for GET requests
+        
+        // Fetch proxy sessions
+        List<String> proxySessions = proxyProvider.fetchProxySessions(batchSize);
+        List<WebClientPool.ManagedWebClient> managedClients = clientFactory.createManagedClients(proxySessions, proxyProvider);
+        
+        log.info("Processing GET batch of {} requests with {} managed proxy sessions", 
+                queryParams.size(), managedClients.size());
+        
+        try {
+            AtomicInteger clientIndex = new AtomicInteger(0);
+            
+            List<T> results = reactor.core.publisher.Flux.fromIterable(queryParams)
+                    .flatMap(query -> {
+                        // Round-robin through available clients
+                        int idx = clientIndex.getAndIncrement() % managedClients.size();
+                        WebClient client = managedClients.get(idx).getWebClient();
+                        
+                        return executeGetWithRetry(client, baseUrl, path, query, responseType, headers);
+                    }, batchSize) // Concurrency = batch size
+                    .collectList()
+                    .block();
+                    
+            return results != null ? results : List.of();
+            
+        } finally {
+            // Always dispose managed clients to prevent memory leaks
+            clientFactory.getWebClientPool().disposeClients(managedClients);
+            log.debug("Disposed {} managed clients after GET batch processing", managedClients.size());
+        }
+    }
+
+    /**
+     * Execute single GET request with retry and session rotation for 429 errors
+     */
+    private <T> Mono<T> executeGetWithRetry(WebClient client, String baseUrl, String path, 
+                                            String queryParams, Class<T> responseType, Map<String, String> headers) {
+        
+        AtomicReference<WebClient> currentClient = new AtomicReference<>(client);
         
         Retry retry = Retry
                 .backoff(MAX_RETRIES, Duration.ofSeconds(1))
@@ -80,15 +135,109 @@ public class DynamicHttpOps {
                 .jitter(0.5)
                 .filter(this::isRetryable)
                 .doBeforeRetry(signal -> {
-                    log.warn("Retrying request (attempt {}/{}): {}", 
+                    Throwable failure = signal.failure();
+                    log.warn("Retrying GET request (attempt {}/{}): {}", 
                             signal.totalRetries() + 1, MAX_RETRIES, 
-                            signal.failure().getMessage());
+                            failure.getMessage());
+                    
+                    // For 429 errors, rotate to a new session
+                    if (failure instanceof WebClientResponseException) {
+                        WebClientResponseException wcre = (WebClientResponseException) failure;
+                        if (wcre.getStatusCode().value() == 429) {
+                            log.info("429 rate limit detected on GET request, rotating to new proxy session");
+                            try {
+                                // Fetch a single new session for rotation
+                                List<String> newSessions = proxyProvider.fetchProxySessions(1);
+                                if (!newSessions.isEmpty()) {
+                                    List<WebClientPool.ManagedWebClient> newManagedClients = clientFactory.createManagedClients(newSessions, proxyProvider);
+                                    if (!newManagedClients.isEmpty()) {
+                                        currentClient.set(newManagedClients.get(0).getWebClient());
+                                        log.debug("Successfully rotated to new proxy session for GET retry");
+                                        // Note: The old client will be disposed when the batch completes
+                                    }
+                                }
+                            } catch (Exception e) {
+                                log.warn("Failed to rotate proxy session for GET request: {}", e.getMessage());
+                            }
+                        }
+                    }
                 });
 
         return Mono.defer(() -> 
-                // Reduced delay - proxies are now pre-verified with unique IPs
                 Mono.delay(Duration.ofMillis(50))
-                        .then(client.post()
+                        .then(currentClient.get().get()
+                                .uri(baseUrl + path + queryParams)
+                                .headers(h -> headers.forEach(h::add))
+                                .retrieve()
+                                .bodyToMono(responseType))
+                        .doOnError(error -> log.debug("GET request failed for {}{}{}: {}", 
+                                baseUrl, path, queryParams, error.getMessage()))
+                        .onErrorResume(error -> {
+                            if (error instanceof WebClientResponseException) {
+                                WebClientResponseException wcre = (WebClientResponseException) error;
+                                if (wcre.getStatusCode().value() == 404) {
+                                    // Return empty for 404 errors
+                                    log.debug("Returning empty response for 404 error: {}", error.getMessage());
+                                    return Mono.empty();
+                                }
+                            }
+                            return Mono.error(error); // Propagate error for retry
+                        })
+        )
+        .retryWhen(retry)
+        .onErrorResume(error -> {
+            // After all retries exhausted, log and return empty instead of throwing
+            log.warn("GET request failed after {} retries, returning empty result: {}", 
+                    MAX_RETRIES, error.getMessage());
+            return Mono.empty();
+        });
+    }
+
+    /**
+     * Execute single POST request with retry and session rotation for 429 errors
+     */
+    private <T> Mono<T> executePostWithRetry(WebClient client, String baseUrl, String path, 
+                                             Object body, Class<T> responseType, Map<String, String> headers) {
+        
+        AtomicReference<WebClient> currentClient = new AtomicReference<>(client);
+        
+        Retry retry = Retry
+                .backoff(MAX_RETRIES, Duration.ofSeconds(1))
+                .maxBackoff(Duration.ofSeconds(10))
+                .jitter(0.5)
+                .filter(this::isRetryable)
+                .doBeforeRetry(signal -> {
+                    Throwable failure = signal.failure();
+                    log.warn("Retrying request (attempt {}/{}): {}", 
+                            signal.totalRetries() + 1, MAX_RETRIES, 
+                            failure.getMessage());
+                    
+                    // For 429 errors, rotate to a new session
+                    if (failure instanceof WebClientResponseException) {
+                        WebClientResponseException wcre = (WebClientResponseException) failure;
+                        if (wcre.getStatusCode().value() == 429) {
+                            log.info("429 rate limit detected, rotating to new proxy session");
+                            try {
+                                // Fetch a single new session for rotation
+                                List<String> newSessions = proxyProvider.fetchProxySessions(1);
+                                if (!newSessions.isEmpty()) {
+                                    List<WebClientPool.ManagedWebClient> newManagedClients = clientFactory.createManagedClients(newSessions, proxyProvider);
+                                    if (!newManagedClients.isEmpty()) {
+                                        currentClient.set(newManagedClients.get(0).getWebClient());
+                                        log.debug("Successfully rotated to new proxy session for retry");
+                                        // Note: The old client will be disposed when the batch completes
+                                    }
+                                }
+                            } catch (Exception e) {
+                                log.warn("Failed to rotate proxy session: {}", e.getMessage());
+                            }
+                        }
+                    }
+                });
+
+        return Mono.defer(() -> 
+                Mono.delay(Duration.ofMillis(50))
+                        .then(currentClient.get().post()
                                 .uri(baseUrl + path)
                                 .headers(h -> headers.forEach(h::add))
                                 .bodyValue(body)
@@ -112,7 +261,6 @@ public class DynamicHttpOps {
         .retryWhen(retry)
         .onErrorResume(error -> {
             // After all retries exhausted, log and return empty instead of throwing
-            // This prevents "onErrorDropped" exceptions in the reactive chain
             log.warn("Request failed after {} retries, returning empty result: {}", 
                     MAX_RETRIES, error.getMessage());
             return Mono.empty();
@@ -143,8 +291,8 @@ public class DynamicHttpOps {
     }
 
     /**
-     * Execute large batch POST requests with region-based session pooling and reuse
-     * Optimized for very large operations (20K+ requests) - fetches sessions once, reuses across batches
+     * Execute large batch POST requests with database session management
+     * Updated logic: For batches >1000, fetch 1000 sessions per batch with 10sec wait time
      * 
      * @param baseUrl Base URL for requests
      * @param path Path to append to base URL
@@ -163,30 +311,27 @@ public class DynamicHttpOps {
             return List.of();
         }
 
-        // Calculate target sessions based on request count
-        // For small batches (<100): use exact count with 20% buffer
-        // For medium batches (100-1000): use the count
-        // For large batches (>1000): cap at 1000 for maximum IP diversity
-        int targetSessions;
-        if (bodies.size() < 100) {
-            targetSessions = Math.min(100, (int)(bodies.size() * 1.2)); // 20% buffer, max 100
-        } else if (bodies.size() <= 1000) {
-            targetSessions = bodies.size(); // Use exact count
+        // Reset batch tracking for new operation
+        proxyProvider.resetBatchTracking();
+        
+        // Determine sessions needed per batch
+        int sessionsPerBatch;
+        if (bodies.size() <= 1000) {
+            // Small batch: use exact count
+            sessionsPerBatch = bodies.size();
         } else {
-            targetSessions = 1000; // Cap at 1000 for very large batches
+            // Large batch: use 1000 sessions per batch
+            sessionsPerBatch = 1000;
         }
-        
-        log.info("Fetching {} unique proxy sessions by region for {} requests (ratio: 1:{})", 
-                targetSessions, bodies.size(), bodies.size() / (double)targetSessions);
-        
-        List<String> proxySessions = proxyProvider.fetchSessionsByRegion(targetSessions);
-        List<WebClient> clients = clientFactory.createClients(proxySessions, proxyProvider);
-        
-        int actualBatchSize = Math.min(batchSize, clients.size());
+
+        int actualBatchSize = Math.min(batchSize, sessionsPerBatch);
         int totalBatches = (int) Math.ceil((double) bodies.size() / actualBatchSize);
         
-        log.info("Processing {} requests in {} batches of {} with {} proxy sessions ({}s delay between batches)", 
-                bodies.size(), totalBatches, actualBatchSize, clients.size(), batchDelaySeconds);
+        // Use 10 second delay for large batches as requested
+        int actualDelaySeconds = bodies.size() > 1000 ? 10 : batchDelaySeconds;
+        
+        log.info("Processing {} requests in {} batches of {} with {} sessions per batch ({}s delay between batches)", 
+                bodies.size(), totalBatches, actualBatchSize, sessionsPerBatch, actualDelaySeconds);
         
         List<T> allResults = Collections.synchronizedList(new ArrayList<>());
         AtomicInteger processedCount = new AtomicInteger(0);
@@ -201,23 +346,36 @@ public class DynamicHttpOps {
                 log.info("Batch {}/{}: Processing requests {} to {} ({} requests)", 
                         batchIdx + 1, totalBatches, startIdx + 1, endIdx, batchBodies.size());
                 
-                // Process batch with round-robin client selection
-                AtomicInteger clientIndex = new AtomicInteger(0);
-                List<T> batchResults = reactor.core.publisher.Flux.fromIterable(batchBodies)
-                        .flatMap(body -> {
-                            int idx = clientIndex.getAndIncrement() % clients.size();
-                            WebClient client = clients.get(idx);
-                            
-                            return executePostWithRetry(client, baseUrl, path, body, responseType, headers)
-                                    .doOnSuccess(result -> {
-                                        int completed = processedCount.incrementAndGet();
-                                        if (completed % 100 == 0) {
-                                            log.debug("Progress: {}/{} requests completed", completed, bodies.size());
-                                        }
-                                    });
-                        }, actualBatchSize) // Concurrency = batch size
-                        .collectList()
-                        .block();
+                // Fetch sessions for this batch
+                List<String> proxySessions = proxyProvider.fetchNextBatchSessions(sessionsPerBatch);
+                List<WebClientPool.ManagedWebClient> managedClients = clientFactory.createManagedClients(proxySessions, proxyProvider);
+                
+                log.info("Batch {}/{}: Using {} managed proxy sessions", batchIdx + 1, totalBatches, managedClients.size());
+                
+                List<T> batchResults = null;
+                try {
+                    // Process batch with round-robin client selection
+                    AtomicInteger clientIndex = new AtomicInteger(0);
+                    batchResults = reactor.core.publisher.Flux.fromIterable(batchBodies)
+                            .flatMap(body -> {
+                                int idx = clientIndex.getAndIncrement() % managedClients.size();
+                                WebClient client = managedClients.get(idx).getWebClient();
+                                
+                                return executePostWithRetry(client, baseUrl, path, body, responseType, headers)
+                                        .doOnSuccess(result -> {
+                                            int completed = processedCount.incrementAndGet();
+                                            if (completed % 100 == 0) {
+                                                log.debug("Progress: {}/{} requests completed", completed, bodies.size());
+                                            }
+                                        });
+                            }, actualBatchSize) // Concurrency = batch size
+                            .collectList()
+                            .block();
+                } finally {
+                    // Always dispose managed clients from this batch to free resources
+                    clientFactory.getWebClientPool().disposeClients(managedClients);
+                    log.debug("Disposed {} managed WebClient instances from batch {}", managedClients.size(), batchIdx + 1);
+                }
                 
                 if (batchResults != null) {
                     allResults.addAll(batchResults);
@@ -229,8 +387,8 @@ public class DynamicHttpOps {
                 
                 // Wait between batches (except for last batch)
                 if (batchIdx < totalBatches - 1) {
-                    log.info("Waiting {}s before next batch...", batchDelaySeconds);
-                    Thread.sleep(batchDelaySeconds * 1000L);
+                    log.info("Waiting {}s before next batch...", actualDelaySeconds);
+                    Thread.sleep(actualDelaySeconds * 1000L);
                 }
             }
             
@@ -241,17 +399,6 @@ public class DynamicHttpOps {
             Thread.currentThread().interrupt();
             log.error("Batch processing interrupted", e);
             throw new RuntimeException("Batch processing interrupted", e);
-        } finally {
-            // Important: Dispose all WebClients to free resources
-            log.info("Disposing {} WebClient instances", clients.size());
-            clients.forEach(client -> {
-                try {
-                    // WebClient doesn't have explicit close, but we can help GC by clearing the reference
-                    // The underlying connection pool will be cleaned up by reactor-netty
-                } catch (Exception e) {
-                    log.warn("Error during client cleanup: {}", e.getMessage());
-                }
-            });
         }
     }
 }
