@@ -66,7 +66,7 @@ public class WalletService {
                             && acc.getAccount().getData() != null
                             && acc.getAccount().getData().getParsed() != null
                             && acc.getAccount().getData().getParsed().getInfo() != null)
-                    //.filter(acc -> QUOTE_MINTS.contains(acc.getAccount().getData().getParsed().getInfo().getMint()))
+                    .filter(acc -> QUOTE_MINTS.contains(acc.getAccount().getData().getParsed().getInfo().getMint()))
                     .map(TokenAccountByOwnerResponse.Value::getPubkey)
                     .filter(Objects::nonNull)
                     .toList();

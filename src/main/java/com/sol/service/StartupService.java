@@ -43,9 +43,9 @@ public class StartupService {
     
     private void processAllWallets() {
         List<String> wallets = List.of(
-                "FiAPe3q5TFYfYu4fP2ySMLRE9qfkAEYLsk2JaPaavvuW",
-                "A7V5qDASoWNkB1uCXgtUs9MCxWPbwZEVRJciPZsPjKdR",
-                "63XhSCjVUxb6R8xLWJ3EAGS8aKRbwNGnSEtCByQ4Asd2"
+                "D5LZbGbf8PSgJeNU4GWkUaWLGRCKXVUsbiohwNPpuVqL"
+                // "A7V5qDASoWNkB1uCXgtUs9MCxWPbwZEVRJciPZsPjKdR",
+                // "63XhSCjVUxb6R8xLWJ3EAGS8aKRbwNGnSEtCByQ4Asd2"
         );
         
         int successCount = 0;
