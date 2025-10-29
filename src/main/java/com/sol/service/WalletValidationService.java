@@ -53,7 +53,7 @@ public class WalletValidationService {
     private static final double MAX_IDENTICAL_SIZE_PERCENTAGE = 0.5;
     
     // Account age requirements
-    private static final long MIN_ACCOUNT_AGE_DAYS = 90;
+    private static final long MIN_ACCOUNT_AGE_DAYS = 60; // Reduced from 90 days based on validation results
     private static final long MIN_MONTHS_TRADED = 3;
     private static final long MAX_DAYS_SINCE_LAST_TRADE = 30;
     private static final int MIN_TOTAL_TRADES = 20;

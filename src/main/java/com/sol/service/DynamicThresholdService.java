@@ -61,7 +61,7 @@ public class DynamicThresholdService {
                 .minAvgHoldingHours(1.0)
                 .suspiciousWinRate(95.0)
                 .maxSameBlockTrades(5)
-                .mevDetectionThreshold(60.0)
+                .mevDetectionThreshold(40.0) // Reduced from 60.0 to reduce false positives
                 .sandwichAttackThreshold(70.0)
                 .arbitrageThreshold(70.0)
                 .sameBlockTradeRateThreshold(0.5)

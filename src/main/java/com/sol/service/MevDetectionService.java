@@ -24,7 +24,7 @@ public class MevDetectionService {
     private static final int MIN_SANDWICH_ATTACKS = 3;
     private static final double MIN_ULTRA_SHORT_RATIO = 0.30; // 30% of trades
     private static final double MIN_TRADES_PER_BLOCK = 2.0;
-    private static final double MEV_SCORE_THRESHOLD = 50.0;
+    private static final double MEV_SCORE_THRESHOLD = 35.0; // Reduced from 50.0 to reduce false positives
     private static final long ULTRA_SHORT_SECONDS = 60; // 1 minute
     
     public record MevAnalysis(
