@@ -56,7 +56,7 @@ public class SolanaService {
     }
 
     @Cached(cacheName = "solanaService:getSignaturesBulk", key = "#wallet", activeProfile = "local")
-    public List<TransactionSignaturesResponse> getSignaturesBulk(List<String> accounts, String wallet) {
+    public List<TransactionSignaturesResponse> getSignaturesBulk(List<String> accounts, String wallet, long limitUnix) {
         if (accounts == null || accounts.isEmpty()) {
             log.warn("No accounts provided for signature bulk fetch");
             return List.of();
@@ -122,7 +122,7 @@ public class SolanaService {
                             pageCount, account, pageResults.size(), accountSignatures.size());
                     
                     // Check if we need to fetch more (result size == 1000 indicates possible more data)
-                    if (pageResults.size() == 1000) {
+                    if (pageResults.size() == 1000 && (pageResults.get(pageResults.size() - 1).getBlockTime() > limitUnix)) {
                         // Get last signature for next page
                         String lastSignature = pageResults.get(pageResults.size() - 1).getSignature();
                         // long firstTimestamp = pageResults.get(0).getBlockTime();

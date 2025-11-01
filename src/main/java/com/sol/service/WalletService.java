@@ -22,6 +22,8 @@ public class WalletService {
     private final SolanaService solanaService;
     private final NormalizeTransaction normalizeTransaction;
 
+    private final WalletCardService walletCardService;
+
     /**
      * Crash-proof wrapper - guarantees no exceptions escape to caller
      */
@@ -80,15 +82,12 @@ public class WalletService {
             
             // Stage 3: Fetch signatures
             currentStage = "fetch_signatures";
-            log.info("[Stage 3/5] Fetching transaction signatures (last 120 days)");
-            long limitUnix = CommonUtil.getDateBeforeDays(120);
+            log.info("[Stage 3/5] Fetching transaction signatures (last 8 days)");
+            long limitUnix = CommonUtil.getDateBeforeDays(8);
             List<String> signatures = fetchSignatureForAllAccounts(accounts, limitUnix, wallet);
             
             if (signatures.isEmpty()) {
                 log.warn("[Stage 3/5] No transaction signatures found for wallet: {} - Stopping", wallet);
-                return;
-            } else if(signatures.size() > 60000) {
-                log.warn("[Stage 3/5] Too many signatures ({}), limiting to 60,000 for wallet: {}", signatures.size(), wallet);
                 return;
             }
 
@@ -107,7 +106,9 @@ public class WalletService {
             // Stage 5: Normalize and calculate PnL
             currentStage = "normalize_and_calculate";
             log.info("[Stage 5/5] Normalizing transactions and calculating PnL metrics");
-            normalizeTransaction.process(transactions, wallet);
+
+            walletCardService.createWalletCard(normalizeTransaction.process(transactions, wallet), wallet);
+
             
             log.info("✓ Successfully completed all 5 stages for wallet: {}", wallet);
             
@@ -154,7 +155,7 @@ public class WalletService {
         try {
             log.debug("Fetching signatures for {} accounts (limit: {})", accounts.size(), limitUnix);
             
-            List<TransactionSignaturesResponse> signaturesObj = solanaService.getSignaturesBulk(accounts, wallet);
+            List<TransactionSignaturesResponse> signaturesObj = solanaService.getSignaturesBulk(accounts, wallet, limitUnix);
 
             if (signaturesObj == null || signaturesObj.isEmpty()) {
                 log.warn("No signature responses received");

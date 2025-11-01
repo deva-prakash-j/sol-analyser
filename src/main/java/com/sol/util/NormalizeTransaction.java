@@ -51,19 +51,16 @@ public class NormalizeTransaction {
     public enum Side { BUY, SELL, UNKNOWN }
 
     /** prints rows; keep signature unchanged */
-    public void process(List<Transaction> transactions, String wallet) {
+    public List<Row> process(List<Transaction> transactions, String wallet) {
         if (transactions == null || transactions.isEmpty()) {
             log.warn("No transactions provided for wallet: {}", wallet);
-            return;
+            return List.of();
         }
         
         if (wallet == null || wallet.isBlank()) {
             log.error("Invalid wallet address");
-            return;
+            return List.of();
         }
-        
-        // Capture total signature count BEFORE deduplication
-        int totalSignatures = transactions.size();
         
         try {
             List<Row> rows;
@@ -71,12 +68,12 @@ public class NormalizeTransaction {
                 rows = processToList(dedupeLatestBySlot(transactions), wallet);
             } catch (Exception e) {
                 log.error("Failed to process transactions for {}: {}", wallet, e.getMessage());
-                return;
+                return List.of();
             }
             
             if (rows == null || rows.isEmpty()) {
                 log.warn("No valid transactions for wallet: {}", wallet);
-                return;
+                return List.of();
             }
             
             rows = rows.stream()
@@ -86,102 +83,15 @@ public class NormalizeTransaction {
             
             if (rows.isEmpty()) {
                 log.warn("No tradeable transactions for wallet: {}", wallet);
-                return;
+                return List.of();
             }
-            
-            // Calculate PnL
-            PnlEngine.Result result;
-            try {
-                result = PnlEngine.run(rows);
-                if (result == null) {
-                    log.error("PnL calculation failed for {}", wallet);
-                    return;
-                }
-            } catch (Exception e) {
-                log.error("PnL calculation error for {}: {}", wallet, e.getMessage());
-                return;
-            }
-            
-            // Calculate unrealized PnL for open positions
-            UnrealizedPnlService.UnrealizedPnlSummary unrealizedPnl = null;
-            try {
-                if (result.openPositions != null && !result.openPositions.isEmpty()) {
-                    unrealizedPnl = unrealizedPnlService.calculateUnrealizedPnl(result.openPositions);
-                }
-            } catch (Exception e) {
-                log.error("Unrealized PnL calculation failed for {}: {}", wallet, e.getMessage());
-            }
-            
-            // Calculate total PnL (realized + unrealized)
-            BigDecimal totalPnl = result.totalRealized;
-            if (unrealizedPnl != null) {
-                totalPnl = totalPnl.add(unrealizedPnl.totalUnrealizedPnl());
-            }
-            
-            // Calculate metrics
-            WalletMetricsCalculator.WalletMetrics metrics;
-            try {
-                metrics = WalletMetricsCalculator.fromResult(result);
-                if (metrics == null) {
-                    log.error("Metrics calculation failed for {}", wallet);
-                    return;
-                }
-            } catch (Exception e) {
-                log.error("Metrics calculation error for {}: {}", wallet, e.getMessage());
-                return;
-            }
-            
-            try {
-                // Score wallet with advanced validation (bot detection, wash trading, account age, signature limit, MEV, priority fees)
-                WalletScoringEngine.ScoringResult score = scoringEngine.scoreWallet(wallet, metrics, rows, transactions, totalSignatures);
-                
-                // Format PnL display
-                String pnlDisplay = unrealizedPnl != null 
-                    ? String.format("$%s (R: $%s, U: $%s)", 
-                        totalPnl.setScale(2, RoundingMode.HALF_UP),
-                        result.totalRealized.setScale(2, RoundingMode.HALF_UP),
-                        unrealizedPnl.totalUnrealizedPnl().setScale(2, RoundingMode.HALF_UP))
-                    : String.format("$%s", result.totalRealized.setScale(2, RoundingMode.HALF_UP));
-                
-                // Log wallet result with rejection reason if failed
-                if (!score.passedHardFilters() || score.tier() == WalletScoringEngine.ConfidenceTier.F) {
-                    String rejectionReason = score.failedFilters().isEmpty() 
-                        ? "Failed scoring criteria" 
-                        : score.failedFilters().get(0); // First failure reason
-                    
-                    log.info("✗ {} | Tier: {} | Score: {} | PnL: {} | WR: {}% | Copy: NO | Reason: {}", 
-                        wallet.substring(0, 8), 
-                        score.tier().label,
-                        score.compositeScore(),
-                        pnlDisplay,
-                        String.format("%.1f", metrics.tradeWinRate()),
-                        rejectionReason
-                    );
-                } else {
-                    log.info("✓ {} | Tier: {} | Score: {} | PnL: {} | WR: {}% | Copy: {}", 
-                        wallet.substring(0, 8), 
-                        score.tier().label,
-                        score.compositeScore(),
-                        pnlDisplay,
-                        String.format("%.1f", metrics.tradeWinRate()),
-                        score.isCopyTradingCandidate() ? "YES" : "NO"
-                    );
-                }
-                
-                // Persist to database
-                try {
-                    persistenceService.saveScore(score);
-                } catch (Exception e) {
-                    log.error("Failed to persist score for {}: {}", wallet.substring(0, 8), e.getMessage());
-                }
-                
-            } catch (Exception e) {
-                log.error("Scoring failed for {}: {}", wallet, e.getMessage());
-            }
-            
+
+            return rows;
+
         } catch (Exception e) {
             log.error("Processing failed for {}: {}", wallet, e.getMessage());
         }
+        return List.of();
     }
 
     public List<Transaction> dedupeLatestBySlot(List<Transaction> txs) {
